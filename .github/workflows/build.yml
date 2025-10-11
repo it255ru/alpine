@@ -121,26 +121,26 @@ jobs:
           
           const issueBody = `# Alpine Build Report ❌
           
-  **Version:** ${{ steps.version.outputs.ALPINE_VERSION }}
-  **Status:** FAILED - Vulnerabilities found
-  **Build Date:** ${new Date().toISOString()}
-
-  ## Security Scan Results
-  Critical or High vulnerabilities detected. Manual review required.
-
-  \`\`\`
-  ${report}
-  \`\`\`
-
-  ## Next Steps
-  1. Review the vulnerabilities above
-  2. Check artifacts for detailed reports
-  3. Consider updating packages or dependencies
-
-  ## Artifacts
-  - RootFS Archive: \`alpine-rootfs.tar.gz\`
-  - Docker Image: \`alpine-image-${{ steps.version.outputs.ALPINE_VERSION }}.tar.gz\`
-  - Security Report: \`trivy-results.txt\``;
+          **Version:** ${{ steps.version.outputs.ALPINE_VERSION }}
+          **Status:** FAILED - Vulnerabilities found
+          **Build Date:** ${new Date().toISOString()}
+        
+          ## Security Scan Results
+          Critical or High vulnerabilities detected. Manual review required.
+        
+          \`\`\`
+          ${report}
+          \`\`\`
+        
+          ## Next Steps
+          1. Review the vulnerabilities above
+          2. Check artifacts for detailed reports
+          3. Consider updating packages or dependencies
+        
+          ## Artifacts
+          - RootFS Archive: \`alpine-rootfs.tar.gz\`
+          - Docker Image: \`alpine-image-${{ steps.version.outputs.ALPINE_VERSION }}.tar.gz\`
+          - Security Report: \`trivy-results.txt\``;
           
           await github.rest.issues.create({
             owner: context.repo.owner,
