@@ -42,50 +42,40 @@ jobs:
     - name: Analyze image layers
       id: layers
       run: |
-        # Создаем отчет о слоях
+        # Создаем отчет о слоях в виде таблицы как на картинке
         echo "## 🗂️ Image Layers Analysis" > layers-report.md
         echo "**Image:** custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }}" >> layers-report.md
         echo "**Total Size:** $(docker images custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} --format "{{.Size}}")" >> layers-report.md
         echo "" >> layers-report.md
-        echo "### Layer Structure:" >> layers-report.md
+        echo "### Layer Specifications:" >> layers-report.md
         echo "" >> layers-report.md
         
-        # Основной образ
-        echo "- [ ] **custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }}**" >> layers-report.md
-        
-        # Получаем слои в правильном порядке (от базового к верхнему)
-        LAYER_COUNT=0
+        # Получаем историю слоев и выводим в формате как на картинке
+        LAYER_NUM=1
         docker history --no-trunc --format "{{.CreatedBy}}\t{{.Size}}" custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} | \
           tail -n +2 | while IFS=$'\t' read -r command size; do
-          # Очищаем команду от ARG и LABEL для лучшей читаемости
-          CLEAN_COMMAND=$(echo "$command" | sed 's/|.* ALPINE_VERSION=[^ ]* //' | sed 's/^[ \t]*//;s/[ \t]*$//')
-          if [[ ! "$CLEAN_COMMAND" =~ ^(LABEL|ARG) ]]; then
-            echo "  - [ ] \`$CLEAN_COMMAND\` $size" >> layers-report.md
-            ((LAYER_COUNT++))
-          fi
+          # Очищаем команду
+          CLEAN_COMMAND=$(echo "$command" | sed 's/ # buildkit//' | sed 's/^[ \t]*//;s/[ \t]*$//')
+          # Форматируем как на картинке: номер, команда, размер
+          printf "%-2s %-65s %s\n" "$LAYER_NUM" "`$CLEAN_COMMAND`" "$size" >> layers-report.md
+          ((LAYER_NUM++))
         done
         
         echo "" >> layers-report.md
-        echo "### Layer Specifications:" >> layers-report.md
+        echo "### Statistics:" >> layers-report.md
         echo "" >> layers-report.md
-        echo "- **Total Layers**: $LAYER_COUNT" >> layers-report.md
+        echo "- **Total Layers**: $((LAYER_NUM-1))" >> layers-report.md
         
-        # Анализ по типам операций
-        echo "- **Layer Types**: " >> layers-report.md
-        docker history --format "{{.CreatedBy}}" custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} | \
-          tail -n +2 | awk '
-          {
-            cmd = $1;
-            if (cmd ~ /^ADD/) add++;
-            else if (cmd ~ /^RUN/) run++;
-            else if (cmd ~ /^COPY/) copy++;
-            else other++;
-          }
+        # Размеры по типам операций
+        docker history --format "{{.CreatedBy}}\t{{.Size}}" custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} | \
+          tail -n +2 | awk -F'\t' '
+          /^ADD/ {add_size = $2}
+          /^RUN/ {run_count++}
+          /^COPY/ {copy_count++}
           END {
-            if (add > 0) printf "  - ADD: %d layers\n", add;
-            if (run > 0) printf "  - RUN: %d layers\n", run;
-            if (copy > 0) printf "  - COPY: %d layers\n", copy;
-            if (other > 0) printf "  - Other: %d layers\n", other;
+            if (add_size) printf "- **Base Image Size**: %s\n", add_size;
+            if (run_count) printf "- **RUN Operations**: %d layers\n", run_count;
+            if (copy_count) printf "- **COPY Operations**: %d layers\n", copy_count;
           }' >> layers-report.md
 
     - name: Scan for CVE with Trivy
