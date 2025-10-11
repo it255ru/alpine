@@ -42,10 +42,6 @@ jobs:
     - name: Analyze image layers
       id: layers
       run: |
-        # Получаем информацию о слоях в JSON формате
-        docker inspect custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} --format='{{json .RootFS.Layers}}' > layers.json
-        docker history --format "{{.Size}}\t{{.CreatedBy}}" custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} > layers-info.txt
-        
         # Создаем отчет о слоях
         echo "## 🗂️ Image Layers Analysis" > layers-report.md
         echo "**Image:** custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }}" >> layers-report.md
@@ -56,25 +52,35 @@ jobs:
         echo "| Layer | Size | Command |" >> layers-report.md
         echo "|-------|------|---------|" >> layers-report.md
         
-        # Читаем информацию о слоях
+        # Получаем историю в правильном формате
+        docker history --no-trunc custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} > docker-history.txt
+        
+        # Парсим историю слоев
         LAYER_NUM=1
-        while IFS=$'\t' read -r size command; do
-          # Очищаем команду
-          CLEAN_COMMAND=$(echo "$command" | sed 's/^[ \t]*//;s/[ \t]*$//' | head -c 35)
-          echo "| $LAYER_NUM | $size | \`$CLEAN_COMMAND\` |" >> layers-report.md
+        while IFS= read -r line; do
+          # Пропускаем заголовок
+          if [ $LAYER_NUM -eq 1 ]; then
+            ((LAYER_NUM++))
+            continue
+          fi
+          
+          # Извлекаем размер (7-е поле) и команду (все после 8-го поля)
+          SIZE=$(echo "$line" | awk '{print $7}')
+          COMMAND=$(echo "$line" | awk '{$1=$2=$3=$4=$5=$6=$7=""; print $0}' | sed 's/^ *//' | head -c 40)
+          
+          echo "| $((LAYER_NUM-1)) | $SIZE | \`$COMMAND\` |" >> layers-report.md
           ((LAYER_NUM++))
-        done < layers-info.txt
+        done < docker-history.txt
         
         echo "" >> layers-report.md
         echo "### Layer Size Distribution:" >> layers-report.md
         echo "" >> layers-report.md
         
-        # Статистика по размерам
-        cut -f1 layers-info.txt | sort | uniq -c | sort -nr -k2 | while read count size; do
+        # Статистика по размерам (убираем дубликаты)
+        docker history --format "{{.Size}}" custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} | \
+          tail -n +2 | sort | uniq -c | sort -nr -k2 | while read count size; do
           echo "- **$size**: $count layers" >> layers-report.md
         done
-        
-        rm -f layers.json layers-info.txt
 
     - name: Scan for CVE with Trivy
       id: trivy-scan
