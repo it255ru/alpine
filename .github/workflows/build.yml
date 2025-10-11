@@ -78,23 +78,23 @@ jobs:
           
           const issueBody = `# Alpine Build Report ✅
           
-  **Version:** ${{ steps.version.outputs.ALPINE_VERSION }}
-  **Status:** SUCCESS
-  **Build Date:** ${new Date().toISOString()}
-
-  ## Security Scan Results
-  No critical or high vulnerabilities found.
-
-  \`\`\`
-  ${report}
-  \`\`\`
-
-  ## Artifacts
-  - RootFS Archive: \`alpine-rootfs.tar.gz\`
-  - Docker Image: \`alpine-image-${{ steps.version.outputs.ALPINE_VERSION }}.tar.gz\`
-  - Security Report: \`trivy-results.txt\`
-
-  All artifacts are available in GitHub Actions artifacts.`;
+          **Version:** ${{ steps.version.outputs.ALPINE_VERSION }}
+          **Status:** SUCCESS
+          **Build Date:** ${new Date().toISOString()}
+        
+          ## Security Scan Results
+          No critical or high vulnerabilities found.
+        
+          \`\`\`
+          ${report}
+          \`\`\`
+        
+          ## Artifacts
+          - RootFS Archive: \`alpine-rootfs.tar.gz\`
+          - Docker Image: \`alpine-image-${{ steps.version.outputs.ALPINE_VERSION }}.tar.gz\`
+          - Security Report: \`trivy-results.txt\`
+        
+          All artifacts are available in GitHub Actions artifacts.`;
           
           const issue = await github.rest.issues.create({
             owner: context.repo.owner,
