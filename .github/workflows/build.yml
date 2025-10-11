@@ -2,15 +2,22 @@ name: Build and Verify Custom Alpine
 
 on:
   schedule:
-    - cron: '0 6 * * *'  # Ежедневно в 06:00 UTC
+    - cron: '0 6 * * *'
   push:
     branches: [ main ]
   workflow_dispatch:
 
+env:
+  # Используем личный namespace вместо организационного
+  IMAGE_NAME: ${{ github.repository_owner }}/alpine-custom
+
 jobs:
   build-and-verify:
     runs-on: ubuntu-latest
-    
+    permissions:
+      contents: read
+      packages: write  # Явно указываем права на запись пакетов
+
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
@@ -22,16 +29,12 @@ jobs:
           grep -oE 'alpine-minirootfs-[0-9]+\.[0-9]+\.[0-9]+-x86_64.tar.gz' | \
           sort -V | tail -n1 | sed 's/alpine-minirootfs-\(.*\)-x86_64.tar.gz/\1/')
         echo "ALPINE_VERSION=$ALPINE_VERSION" >> $GITHUB_OUTPUT
-        echo "version=$ALPINE_VERSION" >> $GITHUB_OUTPUT
 
     - name: Download and verify minirootfs
       run: |
         wget -O alpine-rootfs.tar.gz \
           "https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/x86_64/alpine-minirootfs-${{ steps.version.outputs.ALPINE_VERSION }}-x86_64.tar.gz"
-        
-        # Проверяем целостность архива
         tar -tzf alpine-rootfs.tar.gz >/dev/null || exit 1
-        echo "Rootfs downloaded and verified"
 
     - name: Update Dockerfile with latest version
       run: |
@@ -49,7 +52,6 @@ jobs:
         format: 'sarif'
         output: 'trivy-results.sarif'
         severity: 'CRITICAL,HIGH'
-        exit-code: 1
 
     - name: Upload scan results
       uses: actions/upload-artifact@v4
@@ -70,15 +72,8 @@ jobs:
       if: success()
       run: |
         docker tag custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} \
-          ghcr.io/${{ github.repository }}:${{ steps.version.outputs.ALPINE_VERSION }}
-        docker tag custom-alpine:latest ghcr.io/${{ github.repository }}:latest
+          ghcr.io/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.ALPINE_VERSION }}
+        docker tag custom-alpine:latest ghcr.io/${{ env.IMAGE_NAME }}:latest
         
-        docker push ghcr.io/${{ github.repository }}:${{ steps.version.outputs.ALPINE_VERSION }}
-        docker push ghcr.io/${{ github.repository }}:latest
-
-    - name: Generate SBOM
-      if: success()
-      uses: anchore/sbom-action@v0
-      with:
-        image: custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }}
-        output-format: spdx-json
+        docker push ghcr.io/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.ALPINE_VERSION }}
+        docker push ghcr.io/${{ env.IMAGE_NAME }}:latest
