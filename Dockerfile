@@ -1,39 +1,33 @@
-# Этап 1: Базовый образ из minirootfs
-FROM scratch AS base
+# Используем абсолютно пустой базовый образ
+FROM scratch
 
-# Добавляем корневую файловую систему
-ADD alpine-minirootfs-3.20.3-x86_64.tar.gz /
+# Аргумент для передачи версии Alpine
+ARG ALPINE_VERSION
+LABEL maintainer="Your Name"
+LABEL description="Minimal Alpine Linux image built from rootfs"
+LABEL alpine-version=$ALPINE_VERSION
+
+# Добавляем корневую файловую систему Alpine (фиксированное имя)
+ADD alpine-rootfs.tar.gz /
 
 # Устанавливаем временную зону (опционально)
 RUN echo "Europe/Moscow" > /etc/timezone
 
-# Этап 2: Настройка базовой системы
-FROM base AS configured
-
-# Настраиваем репозитории для установки пакетов
+# Настраиваем репозитории
 RUN echo "https://dl-cdn.alpinelinux.org/alpine/v3.20/main" > /etc/apk/repositories && \
     echo "https://dl-cdn.alpinelinux.org/alpine/v3.20/community" >> /etc/apk/repositories
 
-# Обновляем индекс пакетов
-RUN apk update
-
-# Этап 3: Установка необходимых пакетов безопасности
-FROM configured AS secured
-
-# Устанавливаем только критически важные пакеты
-RUN apk add --no-cache \
-    ca-certificates \
-    tzdata \
-    busybox-extras
-
-# Очищаем кеш apk для уменьшения размера
-RUN rm -rf /var/cache/apk/*
-
-# Этап 4: Финальная настройка
-FROM secured AS final
+# Обновляем индекс пакетов и устанавливаем базовые пакеты
+RUN apk update && \
+    apk add --no-cache ca-certificates tzdata busybox-extras && \
+    rm -rf /var/cache/apk/*
 
 # Создаем необходимые симлинки
 RUN ln -sf /bin/busybox /bin/sh
 
-# Устанавливаем точку входа
+# Рекомендуемые точки монтирования для совместимости с Docker
+VOLUME /tmp
+VOLUME /var/cache/apk
+
+# Указываем оболочку по умолчанию
 CMD ["/bin/sh"]
