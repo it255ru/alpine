@@ -2,7 +2,7 @@
 FROM scratch AS base
 
 # Добавляем корневую файловую систему
-ADD alpine-minirootfs-3.20.2-x86_64.tar.gz /
+ADD alpine-minirootfs-3.20.3-x86_64.tar.gz /
 
 # Устанавливаем временную зону (опционально)
 RUN echo "Europe/Moscow" > /etc/timezone
