@@ -26,7 +26,6 @@ jobs:
           grep -oE 'alpine-minirootfs-[0-9]+\.[0-9]+\.[0-9]+-x86_64.tar.gz' | \
           sort -V | tail -n1 | sed 's/alpine-minirootfs-\(.*\)-x86_64.tar.gz/\1/')
         echo "ALPINE_VERSION=$ALPINE_VERSION" >> $GITHUB_OUTPUT
-        echo "version=$ALPINE_VERSION" >> $GITHUB_OUTPUT
 
     - name: Download and verify minirootfs
       run: |
@@ -47,7 +46,7 @@ jobs:
 
     - name: Scan for CVE with Trivy
       id: trivy-scan
-      continue-on-error: true  # Не останавливаем workflow при найденных CVE
+      continue-on-error: true
       uses: aquasecurity/trivy-action@master
       with:
         image-ref: 'custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }}'
@@ -74,40 +73,42 @@ jobs:
       uses: actions/github-script@v7
       with:
         script: |
-          const report = require('fs').readFileSync('trivy-results.txt', 'utf8');
-          await github.rest.issues.create({
+          const fs = require('fs');
+          const report = fs.readFileSync('trivy-results.txt', 'utf8');
+          
+          const issueBody = `# Alpine Build Report ✅
+          
+  **Version:** ${{ steps.version.outputs.ALPINE_VERSION }}
+  **Status:** SUCCESS
+  **Build Date:** ${new Date().toISOString()}
+
+  ## Security Scan Results
+  No critical or high vulnerabilities found.
+
+  \`\`\`
+  ${report}
+  \`\`\`
+
+  ## Artifacts
+  - RootFS Archive: \`alpine-rootfs.tar.gz\`
+  - Docker Image: \`alpine-image-${{ steps.version.outputs.ALPINE_VERSION }}.tar.gz\`
+  - Security Report: \`trivy-results.txt\`
+
+  All artifacts are available in GitHub Actions artifacts.`;
+          
+          const issue = await github.rest.issues.create({
             owner: context.repo.owner,
             repo: context.repo.repo,
             title: `✅ Alpine Build Success - ${{ steps.version.outputs.ALPINE_VERSION }}`,
-            body: `# Alpine Build Report ✅
-            
-**Version:** ${{ steps.version.outputs.ALPINE_VERSION }}
-**Status:** SUCCESS
-**Build Date:** ${new Date().toISOString()}
-
-## Security Scan Results
-No critical or high vulnerabilities found.
-
-\`\`\`
-${report}
-\`\`\`
-
-## Artifacts
-- RootFS Archive: \`alpine-rootfs.tar.gz\`
-- Docker Image: \`alpine-image-${{ steps.version.outputs.ALPINE_VERSION }}.tar.gz\`
-- Security Report: \`trivy-results.txt\`
-
-All artifacts are available in GitHub Actions artifacts.
-            `,
+            body: issueBody,
             labels: ['build-success', 'security-pass']
-          }).then(issue => {
-            // Закрываем issue сразу после создания
-            github.rest.issues.update({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: issue.data.number,
-              state: 'closed'
-            });
+          });
+          
+          await github.rest.issues.update({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: issue.data.number,
+            state: 'closed'
           });
 
     - name: Create Failure Issue
@@ -115,33 +116,36 @@ All artifacts are available in GitHub Actions artifacts.
       uses: actions/github-script@v7
       with:
         script: |
-          const report = require('fs').readFileSync('trivy-results.txt', 'utf8');
+          const fs = require('fs');
+          const report = fs.readFileSync('trivy-results.txt', 'utf8');
+          
+          const issueBody = `# Alpine Build Report ❌
+          
+  **Version:** ${{ steps.version.outputs.ALPINE_VERSION }}
+  **Status:** FAILED - Vulnerabilities found
+  **Build Date:** ${new Date().toISOString()}
+
+  ## Security Scan Results
+  Critical or High vulnerabilities detected. Manual review required.
+
+  \`\`\`
+  ${report}
+  \`\`\`
+
+  ## Next Steps
+  1. Review the vulnerabilities above
+  2. Check artifacts for detailed reports
+  3. Consider updating packages or dependencies
+
+  ## Artifacts
+  - RootFS Archive: \`alpine-rootfs.tar.gz\`
+  - Docker Image: \`alpine-image-${{ steps.version.outputs.ALPINE_VERSION }}.tar.gz\`
+  - Security Report: \`trivy-results.txt\``;
+          
           await github.rest.issues.create({
             owner: context.repo.owner,
             repo: context.repo.repo,
             title: `❌ Alpine Build Failed - ${{ steps.version.outputs.ALPINE_VERSION }}`,
-            body: `# Alpine Build Report ❌
-            
-**Version:** ${{ steps.version.outputs.ALPINE_VERSION }}
-**Status:** FAILED - Vulnerabilities found
-**Build Date:** ${new Date().toISOString()}
-
-## Security Scan Results
-Critical or High vulnerabilities detected. Manual review required.
-
-\`\`\`
-${report}
-\`\`\`
-
-## Next Steps
-1. Review the vulnerabilities above
-2. Check artifacts for detailed reports
-3. Consider updating packages or dependencies
-
-## Artifacts
-- RootFS Archive: \`alpine-rootfs.tar.gz\`
-- Docker Image: \`alpine-image-${{ steps.version.outputs.ALPINE_VERSION }}.tar.gz\`
-- Security Report: \`trivy-results.txt\`
-            `,
+            body: issueBody,
             labels: ['build-failed', 'security-issues', 'requires-review']
           });
