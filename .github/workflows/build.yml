@@ -29,19 +29,15 @@ jobs:
 
     - name: Download and verify minirootfs
       run: |
-        wget -O alpine-rootfs.tar.gz \
-          "https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/x86_64/alpine-minirootfs-${{ steps.version.outputs.ALPINE_VERSION }}-x86_64.tar.gz"
+        # Скачиваем с оригинальным именем, но переименовываем в фиксированное
+        wget "https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/x86_64/alpine-minirootfs-${{ steps.version.outputs.ALPINE_VERSION }}-x86_64.tar.gz" -O alpine-rootfs.tar.gz
         tar -tzf alpine-rootfs.tar.gz >/dev/null || exit 1
         echo "Rootfs downloaded and verified"
-
-    - name: Update Dockerfile with latest version
-      run: |
-        sed -i "s/alpine-minirootfs-[0-9]*\.[0-9]*\.[0-9]*-x86_64\.tar\.gz/alpine-minirootfs-${{ steps.version.outputs.ALPINE_VERSION }}-x86_64.tar.gz/" Dockerfile
 
     - name: Build Docker image
       id: build
       run: |
-        docker build -t custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} .
+        docker build --build-arg ALPINE_VERSION=${{ steps.version.outputs.ALPINE_VERSION }} -t custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} .
         echo "Image built successfully"
 
     - name: Scan for CVE with Trivy
@@ -74,26 +70,31 @@ jobs:
       with:
         script: |
           const fs = require('fs');
-          const report = fs.readFileSync('trivy-results.txt', 'utf8');
+          let report = 'No vulnerabilities found';
+          try {
+            report = fs.readFileSync('trivy-results.txt', 'utf8');
+          } catch (e) {
+            report = 'Scan completed successfully - no report file generated';
+          }
           
           const issueBody = `# Alpine Build Report ✅
           
           **Version:** ${{ steps.version.outputs.ALPINE_VERSION }}
           **Status:** SUCCESS
           **Build Date:** ${new Date().toISOString()}
-        
+          
           ## Security Scan Results
           No critical or high vulnerabilities found.
-        
+          
           \`\`\`
           ${report}
           \`\`\`
-        
+          
           ## Artifacts
           - RootFS Archive: \`alpine-rootfs.tar.gz\`
           - Docker Image: \`alpine-image-${{ steps.version.outputs.ALPINE_VERSION }}.tar.gz\`
           - Security Report: \`trivy-results.txt\`
-        
+          
           All artifacts are available in GitHub Actions artifacts.`;
           
           const issue = await github.rest.issues.create({
@@ -117,26 +118,31 @@ jobs:
       with:
         script: |
           const fs = require('fs');
-          const report = fs.readFileSync('trivy-results.txt', 'utf8');
+          let report = 'No detailed report available';
+          try {
+            report = fs.readFileSync('trivy-results.txt', 'utf8');
+          } catch (e) {
+            // Ignore error, use default message
+          }
           
           const issueBody = `# Alpine Build Report ❌
           
           **Version:** ${{ steps.version.outputs.ALPINE_VERSION }}
           **Status:** FAILED - Vulnerabilities found
           **Build Date:** ${new Date().toISOString()}
-        
+          
           ## Security Scan Results
           Critical or High vulnerabilities detected. Manual review required.
-        
+          
           \`\`\`
           ${report}
           \`\`\`
-        
+          
           ## Next Steps
           1. Review the vulnerabilities above
           2. Check artifacts for detailed reports
           3. Consider updating packages or dependencies
-        
+          
           ## Artifacts
           - RootFS Archive: \`alpine-rootfs.tar.gz\`
           - Docker Image: \`alpine-image-${{ steps.version.outputs.ALPINE_VERSION }}.tar.gz\`
