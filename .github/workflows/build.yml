@@ -29,7 +29,6 @@ jobs:
 
     - name: Download and verify minirootfs
       run: |
-        # Скачиваем с оригинальным именем, но переименовываем в фиксированное
         wget "https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/x86_64/alpine-minirootfs-${{ steps.version.outputs.ALPINE_VERSION }}-x86_64.tar.gz" -O alpine-rootfs.tar.gz
         tar -tzf alpine-rootfs.tar.gz >/dev/null || exit 1
         echo "Rootfs downloaded and verified"
@@ -50,6 +49,50 @@ jobs:
         output: 'trivy-results.txt'
         severity: 'CRITICAL,HIGH,MEDIUM'
 
+    - name: Generate SBOM with Syft
+      id: sbom
+      run: |
+        # Устанавливаем Syft
+        curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+        # Генерируем SBOM в формате SPDX JSON
+        syft custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} -o spdx-json > sbom-spdx.json
+        # Генерируем человеко-читаемый отчет о пакетах
+        syft custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} -o table > sbom-packages.txt
+        echo "SBOM generated successfully"
+
+    - name: Extract package details
+      id: packages
+      run: |
+        # Парсим SBOM для получения детальной информации о пакетах
+        syft custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} -o json > sbom-detailed.json
+        
+        # Создаем краткий отчет о пакетах
+        echo "## 📦 Package Inventory Report" > package-report.md
+        echo "**Alpine Version:** ${{ steps.version.outputs.ALPINE_VERSION }}" >> package-report.md
+        echo "**Generated:** $(date -u)" >> package-report.md
+        echo "" >> package-report.md
+        echo "### Installed Packages:" >> package-report.md
+        echo "" >> package-report.md
+        echo "| Package | Version | License | Type |" >> package-report.md
+        echo "|---------|---------|---------|------|" >> package-report.md
+        
+        # Извлекаем информацию о пакетах из JSON
+        jq -r '.artifacts[] | "| \(.name) | \(.version) | \(.licenses // ["Unknown"] | join(", ")) | \(.type) |"' sbom-detailed.json >> package-report.md
+        
+        # Подсчитываем общее количество пакетов
+        PACKAGE_COUNT=$(jq '.artifacts | length' sbom-detailed.json)
+        echo "" >> package-report.md
+        echo "**Total packages:** $PACKAGE_COUNT" >> package-report.md
+        
+        # Анализ лицензий
+        echo "" >> package-report.md
+        echo "### 📊 License Distribution:" >> package-report.md
+        echo "" >> package-report.md
+        jq -r '.artifacts[].licenses[]? // "Unknown" | select(. != null)' sbom-detailed.json | sort | uniq -c | sort -nr | \
+          while read count license; do
+            echo "- **$license**: $count packages" >> package-report.md
+          done
+
     - name: Save Docker image as tar archive
       run: |
         docker save custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} | gzip > alpine-image-${{ steps.version.outputs.ALPINE_VERSION }}.tar.gz
@@ -62,6 +105,10 @@ jobs:
           alpine-rootfs.tar.gz
           alpine-image-${{ steps.version.outputs.ALPINE_VERSION }}.tar.gz
           trivy-results.txt
+          sbom-spdx.json
+          sbom-packages.txt
+          sbom-detailed.json
+          package-report.md
         retention-days: 30
 
     - name: Create Success Issue
@@ -71,10 +118,18 @@ jobs:
         script: |
           const fs = require('fs');
           let report = 'No vulnerabilities found';
+          let packageReport = 'No package report available';
+          
           try {
             report = fs.readFileSync('trivy-results.txt', 'utf8');
           } catch (e) {
-            report = 'Scan completed successfully - no report file generated';
+            report = 'Scan completed successfully - no vulnerabilities found';
+          }
+          
+          try {
+            packageReport = fs.readFileSync('package-report.md', 'utf8');
+          } catch (e) {
+            packageReport = 'Package report generation failed';
           }
           
           const issueBody = `# Alpine Build Report ✅
@@ -90,10 +145,16 @@ jobs:
           ${report}
           \`\`\`
           
+          ## SBOM & Package Analysis
+          ${packageReport}
+          
           ## Artifacts
           - RootFS Archive: \`alpine-rootfs.tar.gz\`
           - Docker Image: \`alpine-image-${{ steps.version.outputs.ALPINE_VERSION }}.tar.gz\`
           - Security Report: \`trivy-results.txt\`
+          - SBOM (SPDX): \`sbom-spdx.json\`
+          - Package Details: \`sbom-detailed.json\`
+          - Package Inventory: \`package-report.md\`
           
           All artifacts are available in GitHub Actions artifacts.`;
           
@@ -119,10 +180,18 @@ jobs:
         script: |
           const fs = require('fs');
           let report = 'No detailed report available';
+          let packageReport = 'No package report available';
+          
           try {
             report = fs.readFileSync('trivy-results.txt', 'utf8');
           } catch (e) {
             // Ignore error, use default message
+          }
+          
+          try {
+            packageReport = fs.readFileSync('package-report.md', 'utf8');
+          } catch (e) {
+            packageReport = 'Package report generation failed';
           }
           
           const issueBody = `# Alpine Build Report ❌
@@ -138,15 +207,22 @@ jobs:
           ${report}
           \`\`\`
           
+          ## SBOM & Package Analysis
+          ${packageReport}
+          
           ## Next Steps
           1. Review the vulnerabilities above
           2. Check artifacts for detailed reports
           3. Consider updating packages or dependencies
+          4. Analyze license compliance
           
           ## Artifacts
           - RootFS Archive: \`alpine-rootfs.tar.gz\`
           - Docker Image: \`alpine-image-${{ steps.version.outputs.ALPINE_VERSION }}.tar.gz\`
-          - Security Report: \`trivy-results.txt\``;
+          - Security Report: \`trivy-results.txt\`
+          - SBOM (SPDX): \`sbom-spdx.json\`
+          - Package Details: \`sbom-detailed.json\`
+          - Package Inventory: \`package-report.md\``;
           
           await github.rest.issues.create({
             owner: context.repo.owner,
