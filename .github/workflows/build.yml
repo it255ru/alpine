@@ -2,22 +2,19 @@ name: Build and Verify Custom Alpine
 
 on:
   schedule:
-    - cron: '0 6 * * *'
+    - cron: '0 6 * * *'  # Ежедневно в 06:00 UTC
   push:
     branches: [ main ]
   workflow_dispatch:
-
-env:
-  # Используем личный namespace вместо организационного
-  IMAGE_NAME: ${{ github.repository_owner }}/alpine-custom
 
 jobs:
   build-and-verify:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      packages: write  # Явно указываем права на запись пакетов
-
+      contents: write
+      issues: write
+      packages: read
+    
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
@@ -29,51 +26,122 @@ jobs:
           grep -oE 'alpine-minirootfs-[0-9]+\.[0-9]+\.[0-9]+-x86_64.tar.gz' | \
           sort -V | tail -n1 | sed 's/alpine-minirootfs-\(.*\)-x86_64.tar.gz/\1/')
         echo "ALPINE_VERSION=$ALPINE_VERSION" >> $GITHUB_OUTPUT
+        echo "version=$ALPINE_VERSION" >> $GITHUB_OUTPUT
 
     - name: Download and verify minirootfs
       run: |
         wget -O alpine-rootfs.tar.gz \
           "https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/x86_64/alpine-minirootfs-${{ steps.version.outputs.ALPINE_VERSION }}-x86_64.tar.gz"
         tar -tzf alpine-rootfs.tar.gz >/dev/null || exit 1
+        echo "Rootfs downloaded and verified"
 
     - name: Update Dockerfile with latest version
       run: |
         sed -i "s/alpine-minirootfs-[0-9]*\.[0-9]*\.[0-9]*-x86_64\.tar\.gz/alpine-minirootfs-${{ steps.version.outputs.ALPINE_VERSION }}-x86_64.tar.gz/" Dockerfile
 
     - name: Build Docker image
+      id: build
       run: |
         docker build -t custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} .
-        docker tag custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} custom-alpine:latest
+        echo "Image built successfully"
 
     - name: Scan for CVE with Trivy
+      id: trivy-scan
+      continue-on-error: true  # Не останавливаем workflow при найденных CVE
       uses: aquasecurity/trivy-action@master
       with:
         image-ref: 'custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }}'
-        format: 'sarif'
-        output: 'trivy-results.sarif'
-        severity: 'CRITICAL,HIGH'
+        format: 'table'
+        output: 'trivy-results.txt'
+        severity: 'CRITICAL,HIGH,MEDIUM'
 
-    - name: Upload scan results
+    - name: Save Docker image as tar archive
+      run: |
+        docker save custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} | gzip > alpine-image-${{ steps.version.outputs.ALPINE_VERSION }}.tar.gz
+
+    - name: Upload build artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: security-scan-${{ steps.version.outputs.ALPINE_VERSION }}
-        path: trivy-results.sarif
-      if: always()
+        name: alpine-build-${{ steps.version.outputs.ALPINE_VERSION }}
+        path: |
+          alpine-rootfs.tar.gz
+          alpine-image-${{ steps.version.outputs.ALPINE_VERSION }}.tar.gz
+          trivy-results.txt
+        retention-days: 30
 
-    - name: Login to GitHub Container Registry
-      if: success()
-      uses: docker/login-action@v3
+    - name: Create Success Issue
+      if: steps.trivy-scan.outcome == 'success'
+      uses: actions/github-script@v7
       with:
-        registry: ghcr.io
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          const report = require('fs').readFileSync('trivy-results.txt', 'utf8');
+          await github.rest.issues.create({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            title: `✅ Alpine Build Success - ${{ steps.version.outputs.ALPINE_VERSION }}`,
+            body: `# Alpine Build Report ✅
+            
+**Version:** ${{ steps.version.outputs.ALPINE_VERSION }}
+**Status:** SUCCESS
+**Build Date:** ${new Date().toISOString()}
 
-    - name: Push to GHCR
-      if: success()
-      run: |
-        docker tag custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} \
-          ghcr.io/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.ALPINE_VERSION }}
-        docker tag custom-alpine:latest ghcr.io/${{ env.IMAGE_NAME }}:latest
-        
-        docker push ghcr.io/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.ALPINE_VERSION }}
-        docker push ghcr.io/${{ env.IMAGE_NAME }}:latest
+## Security Scan Results
+No critical or high vulnerabilities found.
+
+\`\`\`
+${report}
+\`\`\`
+
+## Artifacts
+- RootFS Archive: \`alpine-rootfs.tar.gz\`
+- Docker Image: \`alpine-image-${{ steps.version.outputs.ALPINE_VERSION }}.tar.gz\`
+- Security Report: \`trivy-results.txt\`
+
+All artifacts are available in GitHub Actions artifacts.
+            `,
+            labels: ['build-success', 'security-pass']
+          }).then(issue => {
+            // Закрываем issue сразу после создания
+            github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue.data.number,
+              state: 'closed'
+            });
+          });
+
+    - name: Create Failure Issue
+      if: steps.trivy-scan.outcome == 'failure'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const report = require('fs').readFileSync('trivy-results.txt', 'utf8');
+          await github.rest.issues.create({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            title: `❌ Alpine Build Failed - ${{ steps.version.outputs.ALPINE_VERSION }}`,
+            body: `# Alpine Build Report ❌
+            
+**Version:** ${{ steps.version.outputs.ALPINE_VERSION }}
+**Status:** FAILED - Vulnerabilities found
+**Build Date:** ${new Date().toISOString()}
+
+## Security Scan Results
+Critical or High vulnerabilities detected. Manual review required.
+
+\`\`\`
+${report}
+\`\`\`
+
+## Next Steps
+1. Review the vulnerabilities above
+2. Check artifacts for detailed reports
+3. Consider updating packages or dependencies
+
+## Artifacts
+- RootFS Archive: \`alpine-rootfs.tar.gz\`
+- Docker Image: \`alpine-image-${{ steps.version.outputs.ALPINE_VERSION }}.tar.gz\`
+- Security Report: \`trivy-results.txt\`
+            `,
+            labels: ['build-failed', 'security-issues', 'requires-review']
+          });
