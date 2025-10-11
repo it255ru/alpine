@@ -42,11 +42,9 @@ jobs:
     - name: Analyze image layers
       id: layers
       run: |
-        # Анализируем слои образа
-        docker history --no-trunc custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} > docker-history.txt
-        
-        # Получаем детальную информацию о размерах слоев
-        docker inspect custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} > docker-inspect.json
+        # Получаем информацию о слоях в JSON формате
+        docker inspect custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} --format='{{json .RootFS.Layers}}' > layers.json
+        docker history --format "{{.Size}}\t{{.CreatedBy}}" custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} > layers-info.txt
         
         # Создаем отчет о слоях
         echo "## 🗂️ Image Layers Analysis" > layers-report.md
@@ -55,41 +53,28 @@ jobs:
         echo "" >> layers-report.md
         echo "### Layer Details:" >> layers-report.md
         echo "" >> layers-report.md
-        echo "| Layer | Command | Size |" >> layers-report.md
-        echo "|-------|---------|------|" >> layers-report.md
+        echo "| Layer | Size | Command |" >> layers-report.md
+        echo "|-------|------|---------|" >> layers-report.md
         
-        # Получаем историю в формате, который можно парсить
-        docker history --format "table {{.CreatedBy}}\t{{.Size}}" custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} | tail -n +2 > layers.tmp
-        
-        # Обрабатываем каждый слой
+        # Читаем информацию о слоях
         LAYER_NUM=1
-        while IFS=$'\t' read -r command size; do
-          # Очищаем команду от лишних пробелов и обрезаем длину
-          CLEAN_COMMAND=$(echo "$command" | sed 's/^[ \t]*//;s/[ \t]*$//' | head -c 60)
-          echo "| $LAYER_NUM | \`$CLEAN_COMMAND\` | $size |" >> layers-report.md
+        while IFS=$'\t' read -r size command; do
+          # Очищаем команду
+          CLEAN_COMMAND=$(echo "$command" | sed 's/^[ \t]*//;s/[ \t]*$//' | head -c 35)
+          echo "| $LAYER_NUM | $size | \`$CLEAN_COMMAND\` |" >> layers-report.md
           ((LAYER_NUM++))
-        done < layers.tmp
+        done < layers-info.txt
         
         echo "" >> layers-report.md
         echo "### Layer Size Distribution:" >> layers-report.md
         echo "" >> layers-report.md
         
-        # Анализируем распределение размеров (только числовые значения)
-        docker history --format "table {{.Size}}" custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} | \
-          tail -n +2 | grep -E '[0-9]' | sort -hr | uniq -c | \
-          while read count size; do
-            echo "- **$size**: $count layers" >> layers-report.md
-          done
+        # Статистика по размерам
+        cut -f1 layers-info.txt | sort | uniq -c | sort -nr -k2 | while read count size; do
+          echo "- **$size**: $count layers" >> layers-report.md
+        done
         
-        # Добавляем информацию о пустых слоях
-        EMPTY_LAYERS=$(docker history --format "table {{.Size}}" custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} | \
-          tail -n +2 | grep -c "0B")
-        if [ $EMPTY_LAYERS -gt 0 ]; then
-          echo "- **0B**: $EMPTY_LAYERS layers" >> layers-report.md
-        fi
-        
-        rm -f layers.tmp
-        echo "Layers analysis completed"
+        rm -f layers.json layers-info.txt
 
     - name: Scan for CVE with Trivy
       id: trivy-scan
