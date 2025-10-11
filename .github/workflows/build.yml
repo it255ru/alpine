@@ -54,8 +54,7 @@ jobs:
         
         # Получаем историю слоев и формируем таблицу
         LAYER_NUM=1
-        docker history --no-trunc --format "{{.CreatedBy}}\t{{.Size}}" custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} | \
-          tail -n +2 | while IFS=$'\t' read -r command size; do
+        docker history --no-trunc --format "{{.CreatedBy}}\t{{.Size}}" custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} | tail -n +2 | while IFS=$'\t' read -r command size; do
           # Очищаем команду от buildkit и лишних пробелов
           CLEAN_COMMAND=$(echo "$command" | sed 's/ # buildkit//' | sed 's/^[ \t]*//;s/[ \t]*$//')
           # Обрезаем длинную команду для лучшей читаемости
@@ -70,15 +69,21 @@ jobs:
         
         # Подсчет слоев по типам
         TOTAL_LAYERS=$((LAYER_NUM-1))
-        ADD_LAYERS=$(docker history --format "{{.CreatedBy}}" custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} | grep -c "^ADD")
-        RUN_LAYERS=$(docker history --format "{{.CreatedBy}}" custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} | grep -c "^RUN")
-        COPY_LAYERS=$(docker history --format "{{.CreatedBy}}" custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} | grep -c "^COPY")
+        ADD_LAYERS=$(docker history --format "{{.CreatedBy}}" custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} | grep -c "^ADD" || true)
+        RUN_LAYERS=$(docker history --format "{{.CreatedBy}}" custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} | grep -c "^RUN" || true)
+        COPY_LAYERS=$(docker history --format "{{.CreatedBy}}" custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} | grep -c "^COPY" || true)
         OTHER_LAYERS=$((TOTAL_LAYERS - ADD_LAYERS - RUN_LAYERS - COPY_LAYERS))
         
         echo "- **Total Layers**: $TOTAL_LAYERS" >> layers-report.md
-        echo "- **ADD Layers**: $ADD_LAYERS" >> layers-report.md
-        echo "- **RUN Layers**: $RUN_LAYERS" >> layers-report.md
-        echo "- **COPY Layers**: $COPY_LAYERS" >> layers-report.md
+        if [ $ADD_LAYERS -gt 0 ]; then
+          echo "- **ADD Layers**: $ADD_LAYERS" >> layers-report.md
+        fi
+        if [ $RUN_LAYERS -gt 0 ]; then
+          echo "- **RUN Layers**: $RUN_LAYERS" >> layers-report.md
+        fi
+        if [ $COPY_LAYERS -gt 0 ]; then
+          echo "- **COPY Layers**: $COPY_LAYERS" >> layers-report.md
+        fi
         if [ $OTHER_LAYERS -gt 0 ]; then
           echo "- **Other Layers**: $OTHER_LAYERS" >> layers-report.md
         fi
