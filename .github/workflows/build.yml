@@ -58,25 +58,38 @@ jobs:
         echo "| Layer | Command | Size |" >> layers-report.md
         echo "|-------|---------|------|" >> layers-report.md
         
-        # Парсим историю и добавляем в таблицу
+        # Получаем историю в формате, который можно парсить
+        docker history --format "table {{.CreatedBy}}\t{{.Size}}" custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} | tail -n +2 > layers.tmp
+        
+        # Обрабатываем каждый слой
         LAYER_NUM=1
-        docker history --human custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} | tail -n +2 | while IFS= read -r line; do
-          SIZE=$(echo "$line" | awk '{print $7}')
-          COMMAND=$(echo "$line" | cut -d' ' -f8- | head -c 50)
-          echo "| $LAYER_NUM | \`$COMMAND\` | $SIZE |" >> layers-report.md
+        while IFS=$'\t' read -r command size; do
+          # Очищаем команду от лишних пробелов и обрезаем длину
+          CLEAN_COMMAND=$(echo "$command" | sed 's/^[ \t]*//;s/[ \t]*$//' | head -c 60)
+          echo "| $LAYER_NUM | \`$CLEAN_COMMAND\` | $size |" >> layers-report.md
           ((LAYER_NUM++))
-        done
+        done < layers.tmp
         
         echo "" >> layers-report.md
         echo "### Layer Size Distribution:" >> layers-report.md
         echo "" >> layers-report.md
         
-        # Анализируем распределение размеров
-        docker history --human custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} | \
-          tail -n +2 | awk '{print $7}' | sort -hr | uniq -c | \
+        # Анализируем распределение размеров (только числовые значения)
+        docker history --format "table {{.Size}}" custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} | \
+          tail -n +2 | grep -E '[0-9]' | sort -hr | uniq -c | \
           while read count size; do
             echo "- **$size**: $count layers" >> layers-report.md
           done
+        
+        # Добавляем информацию о пустых слоях
+        EMPTY_LAYERS=$(docker history --format "table {{.Size}}" custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} | \
+          tail -n +2 | grep -c "0B")
+        if [ $EMPTY_LAYERS -gt 0 ]; then
+          echo "- **0B**: $EMPTY_LAYERS layers" >> layers-report.md
+        fi
+        
+        rm -f layers.tmp
+        echo "Layers analysis completed"
 
     - name: Scan for CVE with Trivy
       id: trivy-scan
