@@ -52,21 +52,16 @@ jobs:
     - name: Generate SBOM with Syft
       id: sbom
       run: |
-        # Устанавливаем Syft
         curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
-        # Генерируем SBOM в формате SPDX JSON
         syft custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} -o spdx-json > sbom-spdx.json
-        # Генерируем человеко-читаемый отчет о пакетах
         syft custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} -o table > sbom-packages.txt
         echo "SBOM generated successfully"
 
     - name: Extract package details
       id: packages
       run: |
-        # Парсим SBOM для получения детальной информации о пакетах
         syft custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} -o json > sbom-detailed.json
         
-        # Создаем краткий отчет о пакетах
         echo "## 📦 Package Inventory Report" > package-report.md
         echo "**Alpine Version:** ${{ steps.version.outputs.ALPINE_VERSION }}" >> package-report.md
         echo "**Generated:** $(date -u)" >> package-report.md
@@ -76,22 +71,54 @@ jobs:
         echo "| Package | Version | License | Type |" >> package-report.md
         echo "|---------|---------|---------|------|" >> package-report.md
         
-        # Извлекаем информацию о пакетах из JSON
-        jq -r '.artifacts[] | "| \(.name) | \(.version) | \(.licenses // ["Unknown"] | join(", ")) | \(.type) |"' sbom-detailed.json >> package-report.md
+        jq -r '.artifacts[] | 
+          .name as $name |
+          .version as $version |
+          .type as $type |
+          (.licenses | if type == "array" then map(.value? // .) | join(", ") 
+                      elif type == "string" then . 
+                      else "Unknown" end) as $license |
+          "| \($name) | \($version) | \($license) | \($type) |"' sbom-detailed.json >> package-report.md
         
-        # Подсчитываем общее количество пакетов
         PACKAGE_COUNT=$(jq '.artifacts | length' sbom-detailed.json)
         echo "" >> package-report.md
         echo "**Total packages:** $PACKAGE_COUNT" >> package-report.md
         
-        # Анализ лицензий
         echo "" >> package-report.md
         echo "### 📊 License Distribution:" >> package-report.md
         echo "" >> package-report.md
-        jq -r '.artifacts[].licenses[]? // "Unknown" | select(. != null)' sbom-detailed.json | sort | uniq -c | sort -nr | \
+        
+        jq -r '.artifacts[].licenses | 
+          if type == "array" then 
+            if length > 0 then 
+              .[] | .value? // . 
+            else 
+              "Unknown" 
+            end 
+          elif type == "string" then 
+            . 
+          else 
+            "Unknown" 
+          end' sbom-detailed.json | grep -v '^null$' | sort | uniq -c | sort -nr > licenses.tmp
+        
+        if [ -s licenses.tmp ]; then
           while read count license; do
             echo "- **$license**: $count packages" >> package-report.md
+          done < licenses.tmp
+        else
+          echo "- No license information available" >> package-report.md
+        fi
+        
+        echo "" >> package-report.md
+        echo "### 🔧 Package Types:" >> package-report.md
+        echo "" >> package-report.md
+        jq -r '.artifacts[].type' sbom-detailed.json | sort | uniq -c | sort -nr | \
+          while read count type; do
+            echo "- **$type**: $count packages" >> package-report.md
           done
+        
+        rm -f licenses.tmp
+        echo "Package report generated successfully"
 
     - name: Save Docker image as tar archive
       run: |
