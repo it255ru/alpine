@@ -286,39 +286,39 @@ jobs:
           
           const issueBody = `# Alpine Build Report ✅
 
-**Version:** ${{ steps.version.outputs.ALPINE_VERSION }}
-**Status:** SUCCESS
-**Build Date:** ${new Date().toISOString()}
-**Total Image Size:** $(docker images custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} --format "{{.Size}}")
-
-## Security Scan Results
-No critical or high vulnerabilities found.
-
-\`\`\`
-${report}
-\`\`\`
-
-## Image Structure
-${layersReport}
-
-## SBOM & Package Analysis
-${packageReport}
-
-## Package Details
-\`\`\`
-${sbomReport}
-\`\`\`
-
-## Artifacts
-- RootFS Archive: \`alpine-rootfs.tar.gz\`
-- Docker Image: \`alpine-image-${{ steps.version.outputs.ALPINE_VERSION }}.tar.gz\`
-- Security Report: \`trivy-results.txt\`
-- SBOM (SPDX): \`sbom-spdx.json\`
-- Package Details: \`sbom-detailed.json\`
-- Package Inventory: \`package-report.md\`
-- Layer Analysis: \`layers-report.md\`
-
-All artifacts are available in GitHub Actions artifacts.`;
+          **Version:** ${{ steps.version.outputs.ALPINE_VERSION }}
+          **Status:** SUCCESS
+          **Build Date:** ${new Date().toISOString()}
+          **Total Image Size:** $(docker images custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} --format "{{.Size}}")
+          
+          ## Security Scan Results
+          No critical or high vulnerabilities found.
+          
+          \`\`\`
+          ${report}
+          \`\`\`
+          
+          ## Image Structure
+          ${layersReport}
+          
+          ## SBOM & Package Analysis
+          ${packageReport}
+          
+          ## Package Details
+          \`\`\`
+          ${sbomReport}
+          \`\`\`
+          
+          ## Artifacts
+          - RootFS Archive: \`alpine-rootfs.tar.gz\`
+          - Docker Image: \`alpine-image-${{ steps.version.outputs.ALPINE_VERSION }}.tar.gz\`
+          - Security Report: \`trivy-results.txt\`
+          - SBOM (SPDX): \`sbom-spdx.json\`
+          - Package Details: \`sbom-detailed.json\`
+          - Package Inventory: \`package-report.md\`
+          - Layer Analysis: \`layers-report.md\`
+          
+          All artifacts are available in GitHub Actions artifacts.`;
 
           const issue = await github.rest.issues.create({
             owner: context.repo.owner,
@@ -372,44 +372,44 @@ All artifacts are available in GitHub Actions artifacts.`;
           
           const issueBody = `# Alpine Build Report ❌
 
-**Version:** ${{ steps.version.outputs.ALPINE_VERSION }}
-**Status:** FAILED - Vulnerabilities found
-**Build Date:** ${new Date().toISOString()}
-**Total Image Size:** $(docker images custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} --format "{{.Size}}")
-
-## Security Scan Results
-Critical or High vulnerabilities detected. Manual review required.
-
-\`\`\`
-${report}
-\`\`\`
-
-## Image Structure
-${layersReport}
-
-## SBOM & Package Analysis
-${packageReport}
-
-## Package Details
-\`\`\`
-${sbomReport}
-\`\`\`
-
-## Next Steps
-1. Review the vulnerabilities above
-2. Check artifacts for detailed reports
-3. Consider updating packages or dependencies
-4. Analyze license compliance
-5. Review image layer structure
-
-## Artifacts
-- RootFS Archive: \`alpine-rootfs.tar.gz\`
-- Docker Image: \`alpine-image-${{ steps.version.outputs.ALPINE_VERSION }}.tar.gz\`
-- Security Report: \`trivy-results.txt\`
-- SBOM (SPDX): \`sbom-spdx.json\`
-- Package Details: \`sbom-detailed.json\`
-- Package Inventory: \`package-report.md\`
-- Layer Analysis: \`layers-report.md\``;
+          **Version:** ${{ steps.version.outputs.ALPINE_VERSION }}
+          **Status:** FAILED - Vulnerabilities found
+          **Build Date:** ${new Date().toISOString()}
+          **Total Image Size:** $(docker images custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} --format "{{.Size}}")
+          
+          ## Security Scan Results
+          Critical or High vulnerabilities detected. Manual review required.
+          
+          \`\`\`
+          ${report}
+          \`\`\`
+          
+          ## Image Structure
+          ${layersReport}
+          
+          ## SBOM & Package Analysis
+          ${packageReport}
+          
+          ## Package Details
+          \`\`\`
+          ${sbomReport}
+          \`\`\`
+          
+          ## Next Steps
+          1. Review the vulnerabilities above
+          2. Check artifacts for detailed reports
+          3. Consider updating packages or dependencies
+          4. Analyze license compliance
+          5. Review image layer structure
+          
+          ## Artifacts
+          - RootFS Archive: \`alpine-rootfs.tar.gz\`
+          - Docker Image: \`alpine-image-${{ steps.version.outputs.ALPINE_VERSION }}.tar.gz\`
+          - Security Report: \`trivy-results.txt\`
+          - SBOM (SPDX): \`sbom-spdx.json\`
+          - Package Details: \`sbom-detailed.json\`
+          - Package Inventory: \`package-report.md\`
+          - Layer Analysis: \`layers-report.md\``;
 
           await github.rest.issues.create({
             owner: context.repo.owner,
