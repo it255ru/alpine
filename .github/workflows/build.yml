@@ -132,13 +132,22 @@ jobs:
         echo "| # | Type | Command | Size | Impact |" >> layers-report.md
         echo "|---|------|---------|------|--------|" >> layers-report.md
         
-        # Используем человеко-читаемый формат с правильным разделителем
-        docker history --no-trunc --format "{{.CreatedBy}}|||{{.Size}}" custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} | tail -n +2 > /tmp/docker_layers_custom.txt
+        # Получаем сырой вывод и парсим вручную
+        docker history --no-trunc custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} | tail -n +2 | sed 's/  / /g' > /tmp/docker_raw.txt
         
         LAYER_NUM=1
-        tac /tmp/docker_layers_custom.txt | while IFS='|||' read -r command size; do
+        tac /tmp/docker_raw.txt | while IFS= read -r line; do
+          # Извлекаем размер (последнее числовое поле перед командой)
+          SIZE=$(echo "$line" | grep -o '[0-9.]\+[KMG]B' | head -1)
+          if [ -z "$SIZE" ]; then
+            SIZE="0B"
+          fi
+          
+          # Извлекаем команду (все после даты/времени)
+          COMMAND=$(echo "$line" | sed 's/.*ago[ ]*//' | sed 's/[ ]*[0-9.]\+[KMG]B.*//')
+          
           # Очищаем команду
-          CLEAN_COMMAND=$(echo "$command" | sed 's/# buildkit//g' | sed 's/|.* ALPINE_VERSION=[^ ]* //g' | sed 's/^[ \t]*//;s/[ \t]*$//')
+          CLEAN_COMMAND=$(echo "$COMMAND" | sed 's/# buildkit//g' | sed 's/|.* ALPINE_VERSION=[^ ]* //g' | sed 's/^[ \t]*//;s/[ \t]*$//')
           
           # Сокращаем только если команда длиннее 40 символов
           if [ ${#CLEAN_COMMAND} -gt 40 ]; then
@@ -151,34 +160,34 @@ jobs:
           LAYER_TYPE=""
           IMPACT=""
           
-          if [[ "$command" == ARG* ]]; then
+          if [[ "$COMMAND" == ARG* ]]; then
             LAYER_TYPE="Build Arg"
             IMPACT="⚙️ Build-time"
-          elif [[ "$command" == LABEL* ]]; then
+          elif [[ "$COMMAND" == LABEL* ]]; then
             LAYER_TYPE="Metadata"
             IMPACT="📝 Info only"
-          elif [[ "$command" == ADD*rootfs* ]]; then
+          elif [[ "$COMMAND" == ADD*rootfs* ]]; then
             LAYER_TYPE="Base Image"
             IMPACT="🏗️ Foundation"
-          elif [[ "$command" == RUN*apk*add* && "$size" != "0B" ]]; then
+          elif [[ "$COMMAND" == RUN*apk*add* && "$SIZE" != "0B" ]]; then
             LAYER_TYPE="Packages"
             IMPACT="📦 Adds packages"
-          elif [[ "$command" == RUN*echo*repos* ]]; then
+          elif [[ "$COMMAND" == RUN*echo*repos* ]]; then
             LAYER_TYPE="Config"
             IMPACT="⚙️ Setup"
-          elif [[ "$command" == RUN*timezone* ]]; then
+          elif [[ "$COMMAND" == RUN*timezone* ]]; then
             LAYER_TYPE="Config"
             IMPACT="🌍 Localization"
-          elif [[ "$command" == RUN*ln* ]]; then
+          elif [[ "$COMMAND" == RUN*ln* ]]; then
             LAYER_TYPE="Symlinks"
             IMPACT="🔗 Symlinks"
-          elif [[ "$command" == VOLUME* ]]; then
+          elif [[ "$COMMAND" == VOLUME* ]]; then
             LAYER_TYPE="Volume"
             IMPACT="💾 Storage"
-          elif [[ "$command" == CMD* ]]; then
+          elif [[ "$COMMAND" == CMD* ]]; then
             LAYER_TYPE="Command"
             IMPACT="🚀 Runtime"
-          elif [[ "$command" == RUN* ]]; then
+          elif [[ "$COMMAND" == RUN* ]]; then
             LAYER_TYPE="Execution"
             IMPACT="🔧 Configuration"
           else
@@ -186,7 +195,7 @@ jobs:
             IMPACT="❓ Unknown"
           fi
           
-          echo "| $LAYER_NUM | $LAYER_TYPE | \`$SHORT_COMMAND\` | $size | $IMPACT |" >> layers-report.md
+          echo "| $LAYER_NUM | $LAYER_TYPE | \`$SHORT_COMMAND\` | $SIZE | $IMPACT |" >> layers-report.md
           ((LAYER_NUM++))
         done
         
@@ -219,7 +228,7 @@ jobs:
           echo "> 📝 **Note**: $TRUNCATED_COUNT commands are truncated (view full commands in artifacts)" >> layers-report.md
         fi
         
-        rm -f /tmp/docker_layers_custom.txt
+        rm -f /tmp/docker_raw.txt
 
     - name: Save Docker image as tar archive
       run: |
