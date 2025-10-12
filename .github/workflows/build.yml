@@ -244,34 +244,34 @@ jobs:
           
           const issueBody = `# Alpine Build Report ✅
 
-**Version:** ${{ steps.version.outputs.ALPINE_VERSION }}
-**Status:** SUCCESS
-**Build Date:** ${new Date().toISOString()}
-**Total Image Size:** $(docker images custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} --format "{{.Size}}")
-
-## Security Scan Results
-No critical or high vulnerabilities found.
-
-\`\`\`
-${report}
-\`\`\`
-
-## Image Structure
-${layersReport}
-
-## Package Analysis
-${packageReport}
-
-## Artifacts
-- RootFS Archive: \`alpine-rootfs.tar.gz\`
-- Docker Image: \`alpine-image-${{ steps.version.outputs.ALPINE_VERSION }}.tar.gz\`
-- Security Report: \`trivy-results.txt\`
-- SBOM (SPDX): \`sbom-spdx.json\`
-- Package Details: \`sbom-detailed.json\`
-- Package Inventory: \`package-report.md\`
-- Layer Analysis: \`layers-report.md\`
-
-All artifacts are available in GitHub Actions artifacts.`;
+          **Version:** ${{ steps.version.outputs.ALPINE_VERSION }}
+          **Status:** SUCCESS
+          **Build Date:** ${new Date().toISOString()}
+          **Total Image Size:** $(docker images custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} --format "{{.Size}}")
+          
+          ## Security Scan Results
+          No critical or high vulnerabilities found.
+          
+          \`\`\`
+          ${report}
+          \`\`\`
+          
+          ## Image Structure
+          ${layersReport}
+          
+          ## Package Analysis
+          ${packageReport}
+          
+          ## Artifacts
+          - RootFS Archive: \`alpine-rootfs.tar.gz\`
+          - Docker Image: \`alpine-image-${{ steps.version.outputs.ALPINE_VERSION }}.tar.gz\`
+          - Security Report: \`trivy-results.txt\`
+          - SBOM (SPDX): \`sbom-spdx.json\`
+          - Package Details: \`sbom-detailed.json\`
+          - Package Inventory: \`package-report.md\`
+          - Layer Analysis: \`layers-report.md\`
+          
+          All artifacts are available in GitHub Actions artifacts.`;
 
           const issue = await github.rest.issues.create({
             owner: context.repo.owner,
