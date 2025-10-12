@@ -68,56 +68,21 @@ jobs:
         echo "" >> package-report.md
         echo "### Installed Packages:" >> package-report.md
         echo "" >> package-report.md
-        echo "| Package | Version | License | Type |" >> package-report.md
-        echo "|---------|---------|---------|------|" >> package-report.md
+        echo "| Package | Version | License |" >> package-report.md
+        echo "|---------|---------|---------|" >> package-report.md
         
         jq -r '.artifacts[] | 
           .name as $name |
           .version as $version |
-          .type as $type |
           (.licenses | if type == "array" then map(.value? // .) | join(", ") 
                       elif type == "string" then . 
                       else "Unknown" end) as $license |
-          "| \($name) | \($version) | \($license) | \($type) |"' sbom-detailed.json >> package-report.md
+          "| \($name) | \($version) | \($license) |"' sbom-detailed.json >> package-report.md
         
         PACKAGE_COUNT=$(jq '.artifacts | length' sbom-detailed.json)
         echo "" >> package-report.md
         echo "**Total packages:** $PACKAGE_COUNT" >> package-report.md
         
-        echo "" >> package-report.md
-        echo "### 📊 License Distribution:" >> package-report.md
-        echo "" >> package-report.md
-        
-        jq -r '.artifacts[].licenses | 
-          if type == "array" then 
-            if length > 0 then 
-              .[] | .value? // . 
-            else 
-              "Unknown" 
-            end 
-          elif type == "string" then 
-            . 
-          else 
-            "Unknown" 
-          end' sbom-detailed.json | grep -v '^null$' | sort | uniq -c | sort -nr > licenses.tmp
-        
-        if [ -s licenses.tmp ]; then
-          while read count license; do
-            echo "- **$license**: $count packages" >> package-report.md
-          done < licenses.tmp
-        else
-          echo "- No license information available" >> package-report.md
-        fi
-        
-        echo "" >> package-report.md
-        echo "### 🔧 Package Types:" >> package-report.md
-        echo "" >> package-report.md
-        jq -r '.artifacts[].type' sbom-detailed.json | sort | uniq -c | sort -nr | \
-          while read count type; do
-            echo "- **$type**: $count packages" >> package-report.md
-          done
-        
-        rm -f licenses.tmp
         echo "Package report generated successfully"
 
     - name: Analyze image layers
@@ -258,7 +223,6 @@ jobs:
           let report = 'No vulnerabilities found';
           let packageReport = 'No package report available';
           let layersReport = 'No layers report available';
-          let sbomReport = 'No SBOM report available';
           
           try {
             report = fs.readFileSync('trivy-results.txt', 'utf8');
@@ -278,47 +242,36 @@ jobs:
             layersReport = 'Layers analysis failed';
           }
           
-          try {
-            sbomReport = fs.readFileSync('sbom-packages.txt', 'utf8');
-          } catch (e) {
-            sbomReport = 'SBOM generation failed';
-          }
-          
           const issueBody = `# Alpine Build Report ✅
 
-          **Version:** ${{ steps.version.outputs.ALPINE_VERSION }}
-          **Status:** SUCCESS
-          **Build Date:** ${new Date().toISOString()}
-          **Total Image Size:** $(docker images custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} --format "{{.Size}}")
-          
-          ## Security Scan Results
-          No critical or high vulnerabilities found.
-          
-          \`\`\`
-          ${report}
-          \`\`\`
-          
-          ## Image Structure
-          ${layersReport}
-          
-          ## SBOM & Package Analysis
-          ${packageReport}
-          
-          ## Package Details
-          \`\`\`
-          ${sbomReport}
-          \`\`\`
-          
-          ## Artifacts
-          - RootFS Archive: \`alpine-rootfs.tar.gz\`
-          - Docker Image: \`alpine-image-${{ steps.version.outputs.ALPINE_VERSION }}.tar.gz\`
-          - Security Report: \`trivy-results.txt\`
-          - SBOM (SPDX): \`sbom-spdx.json\`
-          - Package Details: \`sbom-detailed.json\`
-          - Package Inventory: \`package-report.md\`
-          - Layer Analysis: \`layers-report.md\`
-          
-          All artifacts are available in GitHub Actions artifacts.`;
+**Version:** ${{ steps.version.outputs.ALPINE_VERSION }}
+**Status:** SUCCESS
+**Build Date:** ${new Date().toISOString()}
+**Total Image Size:** $(docker images custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} --format "{{.Size}}")
+
+## Security Scan Results
+No critical or high vulnerabilities found.
+
+\`\`\`
+${report}
+\`\`\`
+
+## Image Structure
+${layersReport}
+
+## Package Analysis
+${packageReport}
+
+## Artifacts
+- RootFS Archive: \`alpine-rootfs.tar.gz\`
+- Docker Image: \`alpine-image-${{ steps.version.outputs.ALPINE_VERSION }}.tar.gz\`
+- Security Report: \`trivy-results.txt\`
+- SBOM (SPDX): \`sbom-spdx.json\`
+- Package Details: \`sbom-detailed.json\`
+- Package Inventory: \`package-report.md\`
+- Layer Analysis: \`layers-report.md\`
+
+All artifacts are available in GitHub Actions artifacts.`;
 
           const issue = await github.rest.issues.create({
             owner: context.repo.owner,
@@ -344,7 +297,6 @@ jobs:
           let report = 'No detailed report available';
           let packageReport = 'No package report available';
           let layersReport = 'No layers report available';
-          let sbomReport = 'No SBOM report available';
           
           try {
             report = fs.readFileSync('trivy-results.txt', 'utf8');
@@ -364,12 +316,6 @@ jobs:
             layersReport = 'Layers analysis failed';
           }
           
-          try {
-            sbomReport = fs.readFileSync('sbom-packages.txt', 'utf8');
-          } catch (e) {
-            sbomReport = 'SBOM generation failed';
-          }
-          
           const issueBody = `# Alpine Build Report ❌
 
           **Version:** ${{ steps.version.outputs.ALPINE_VERSION }}
@@ -387,20 +333,14 @@ jobs:
           ## Image Structure
           ${layersReport}
           
-          ## SBOM & Package Analysis
+          ## Package Analysis
           ${packageReport}
-          
-          ## Package Details
-          \`\`\`
-          ${sbomReport}
-          \`\`\`
           
           ## Next Steps
           1. Review the vulnerabilities above
           2. Check artifacts for detailed reports
           3. Consider updating packages or dependencies
-          4. Analyze license compliance
-          5. Review image layer structure
+          4. Review image layer structure
           
           ## Artifacts
           - RootFS Archive: \`alpine-rootfs.tar.gz\`
