@@ -42,120 +42,49 @@ jobs:
     - name: Analyze image layers
       id: layers
       run: |
-        # Создаем отчет о слоях с объединенной информацией
+        # Создаем отчет о слоях
         echo "## 🗂️ Image Layers Analysis" > layers-report.md
         echo "**Image:** custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }}" >> layers-report.md
         echo "**Total Size:** $(docker images custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} --format "{{.Size}}")" >> layers-report.md
         echo "" >> layers-report.md
-        echo "### Build Process Analysis:" >> layers-report.md
+        echo "### Build Process:" >> layers-report.md
         echo "" >> layers-report.md
-        echo "| # | Type | Command | Size | Impact |" >> layers-report.md
-        echo "|---|------|---------|------|--------|" >> layers-report.md
+        echo "| # | Type | Command | Size |" >> layers-report.md
+        echo "|---|------|---------|------|" >> layers-report.md
         
-        # Получаем историю слоев в правильном порядке
-        docker history --no-trunc --format "table {{.CreatedBy}}\t{{.Size}}" custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} | tail -n +2 > /tmp/docker_layers.txt
-        
-        # Переворачиваем порядок и обрабатываем
+        # Получаем и обрабатываем слои
         LAYER_NUM=1
-        tac /tmp/docker_layers.txt | while IFS=$'\t' read -r command size; do
-          # Очищаем команду
+        docker history --no-trunc --format "table {{.CreatedBy}}\t{{.Size}}" custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} | \
+          tail -n +2 | tac | while IFS=$'\t' read -r command size; do
+          
           CLEAN_COMMAND=$(echo "$command" | sed 's/ # buildkit//g' | sed 's/|.* ALPINE_VERSION=[^ ]* //g' | sed 's/^[ \t]*//;s/[ \t]*$//')
-          SHORT_COMMAND=$(echo "$CLEAN_COMMAND" | head -c 50)
+          SHORT_COMMAND=$(echo "$CLEAN_COMMAND" | head -c 55)
           
-          # Определяем тип и влияние
-          LAYER_TYPE=""
-          IMPACT=""
-          
-          if [[ "$command" == ARG* ]]; then
-            LAYER_TYPE="Build Arg"
-            IMPACT="⚙️ Build-time"
-          elif [[ "$command" == LABEL* ]]; then
-            LAYER_TYPE="Metadata"
-            IMPACT="📝 Info only"
-          elif [[ "$command" == ADD*rootfs* ]]; then
-            LAYER_TYPE="Base Image"
-            IMPACT="🏗️ Foundation"
-          elif [[ "$command" == RUN*apk*add* && "$size" != "0B" ]]; then
-            LAYER_TYPE="Package Install"
-            IMPACT="📦 Adds packages"
-          elif [[ "$command" == RUN*echo*repos* ]]; then
-            LAYER_TYPE="Config"
-            IMPACT="⚙️ Setup"
-          elif [[ "$command" == RUN*timezone* ]]; then
-            LAYER_TYPE="Config"
-            IMPACT="🌍 Localization"
-          elif [[ "$command" == RUN*ln* ]]; then
-            LAYER_TYPE="Config"
-            IMPACT="🔗 Symlinks"
-          elif [[ "$command" == VOLUME* ]]; then
-            LAYER_TYPE="Volume"
-            IMPACT="💾 Storage"
-          elif [[ "$command" == CMD* ]]; then
-            LAYER_TYPE="Command"
-            IMPACT="🚀 Runtime"
-          elif [[ "$command" == RUN* ]]; then
-            LAYER_TYPE="Execution"
-            IMPACT="🔧 Configuration"
-          else
-            LAYER_TYPE="Other"
-            IMPACT="❓ Unknown"
+          # Простая классификация
+          if [[ "$command" == ARG* ]]; then TYPE="Build Arg"
+          elif [[ "$command" == LABEL* ]]; then TYPE="Metadata"  
+          elif [[ "$command" == ADD*rootfs* ]]; then TYPE="Base Image"
+          elif [[ "$command" == RUN*apk*add* ]]; then TYPE="Packages"
+          elif [[ "$command" == RUN*echo* ]]; then TYPE="Config"
+          elif [[ "$command" == RUN*ln* ]]; then TYPE="Symlinks"
+          elif [[ "$command" == VOLUME* ]]; then TYPE="Volume"
+          elif [[ "$command" == CMD* ]]; then TYPE="Command"
+          elif [[ "$command" == RUN* ]]; then TYPE="Execution"
+          else TYPE="Other"
           fi
           
-          echo "| $LAYER_NUM | $LAYER_TYPE | \`$SHORT_COMMAND\` | $size | $IMPACT |" >> layers-report.md
+          echo "| $LAYER_NUM | $TYPE | \`$SHORT_COMMAND\` | $size |" >> layers-report.md
           ((LAYER_NUM++))
         done
         
         TOTAL_LAYERS=$((LAYER_NUM - 1))
         
-        # Статистика сборки (упрощенная, без сложных вычислений)
+        # Простая статистика
         echo "" >> layers-report.md
-        echo "### 📊 Build Statistics:" >> layers-report.md
-        echo "" >> layers-report.md
-        
-        # Анализ по типам слоев
-        echo "**Layer Types Distribution:**" >> layers-report.md
-        grep "| [0-9]* | " layers-report.md | sed 's/|/ /g' | awk '{print $3}' | sort | uniq -c | sort -nr | while read count type; do
-          echo "- **$type**: $count layers" >> layers-report.md
-        done
-        
-        echo "" >> layers-report.md
-        echo "**Size Analysis:**" >> layers-report.md
-        
-        # Получаем размеры простым способом
-        BASE_LAYER_SIZE=$(grep "Base Image" layers-report.md | head -1 | awk -F'|' '{print $5}' | tr -d ' ')
-        PACKAGE_LAYERS=$(grep "Package Install" layers-report.md | wc -l)
-        CONFIG_LAYERS=$(grep -E "Config|Execution" layers-report.md | wc -l)
-        ZERO_B_LAYERS=$(grep "| 0B |" layers-report.md | wc -l)
-        NON_ZERO_LAYERS=$((TOTAL_LAYERS - ZERO_B_LAYERS))
-        
-        echo "- **Base Layer**: $BASE_LAYER_SIZE" >> layers-report.md
-        echo "- **Package Layers**: $PACKAGE_LAYERS" >> layers-report.md
-        echo "- **Configuration Layers**: $CONFIG_LAYERS" >> layers-report.md
-        echo "- **Zero-size Layers**: $ZERO_B_LAYERS" >> layers-report.md
+        echo "### Statistics:" >> layers-report.md
         echo "- **Total Layers**: $TOTAL_LAYERS" >> layers-report.md
-        
-        # Рекомендации по оптимизации
-        echo "" >> layers-report.md
-        echo "### 💡 Optimization Insights:" >> layers-report.md
-        echo "" >> layers-report.md
-        
-        if grep -q "apk add.*ca-certificates" /tmp/docker_layers.txt; then
-          echo "> ⚠️  **Redundant package installation**: ca-certificates already included in base Alpine rootfs" >> layers-report.md
-        fi
-        
-        RUN_COMMANDS_COUNT=$(grep "RUN" /tmp/docker_layers.txt | wc -l)
-        if [ $RUN_COMMANDS_COUNT -gt 3 ]; then
-          echo "> 💡 **Consider layer consolidation**: Multiple RUN commands could be combined" >> layers-report.md
-        fi
-        
-        if [ $ZERO_B_LAYERS -gt 5 ]; then
-          echo "> 💡 **Layer efficiency**: $ZERO_B_LAYERS metadata/configuration layers" >> layers-report.md
-        fi
-        
-        # Проверяем эффективность сборки
-        if [ $NON_ZERO_LAYERS -le 2 ]; then
-          echo "> ✅ **Efficient build**: Minimal number of size-impacting layers" >> layers-report.md
-        fi
+        echo "- **Base Image Size**: $(grep "Base Image" layers-report.md | head -1 | awk -F'|' '{print $5}' | tr -d ' ')" >> layers-report.md
+        echo "- **Package Layers**: $(grep "Packages" layers-report.md | wc -l)" >> layers-report.md
         
         rm -f /tmp/docker_layers.txt
         
