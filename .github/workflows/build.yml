@@ -42,39 +42,67 @@ jobs:
     - name: Analyze image layers
       id: layers
       run: |
-        # Создаем отчет о слоях
+        # Создаем отчет о слоях в правильном порядке
         echo "## 🗂️ Image Layers Analysis" > layers-report.md
         echo "**Image:** custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }}" >> layers-report.md
         echo "**Total Size:** $(docker images custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} --format "{{.Size}}")" >> layers-report.md
         echo "" >> layers-report.md
-        echo "### Layer Details:" >> layers-report.md
+        echo "### Build Process (Dockerfile Order):" >> layers-report.md
         echo "" >> layers-report.md
-        echo "| # | Command | Size |" >> layers-report.md
-        echo "|---|---------|------|" >> layers-report.md
+        echo "| Step | Operation | Size | Description |" >> layers-report.md
+        echo "|------|-----------|------|-------------|" >> layers-report.md
         
-        # Просто выводим слои без сложного подсчета
+        # Используем --human=false для точного парсинга и --reverse для правильного порядка
         LAYER_NUM=1
-        docker history --no-trunc --format "{{.CreatedBy}}\t{{.Size}}" custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} | tail -n +2 | while IFS=$'\t' read -r command size; do
+        docker image history --no-trunc --format "{{.CreatedBy}}\t{{.Size}}" --reverse custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} | tail -n +2 | while IFS=$'\t' read -r command size; do
+          # Очищаем команду
           CLEAN_COMMAND=$(echo "$command" | sed 's/ # buildkit//g' | sed 's/|.* ALPINE_VERSION=[^ ]* //g' | sed 's/^[ \t]*//;s/[ \t]*$//')
-          SHORT_COMMAND=$(echo "$CLEAN_COMMAND" | head -c 60)
-          echo "| $LAYER_NUM | \`$SHORT_COMMAND\` | $size |" >> layers-report.md
+          SHORT_COMMAND=$(echo "$CLEAN_COMMAND" | head -c 45)
+          
+          # Определяем описание для каждого типа операции
+          DESCRIPTION=""
+          if [[ "$command" == ADD*rootfs* ]]; then
+            DESCRIPTION="Base Alpine rootfs"
+          elif [[ "$command" == RUN*apk*add* ]]; then
+            DESCRIPTION="Package installation"
+          elif [[ "$command" == RUN*echo*repos* ]]; then
+            DESCRIPTION="Repository setup"
+          elif [[ "$command" == RUN*timezone* ]]; then
+            DESCRIPTION="Timezone configuration"
+          elif [[ "$command" == RUN*ln* ]]; then
+            DESCRIPTION="Symlink creation"
+          elif [[ "$command" == VOLUME* ]]; then
+            DESCRIPTION="Volume declaration"
+          elif [[ "$command" == LABEL* ]]; then
+            DESCRIPTION="Image metadata"
+          elif [[ "$command" == ARG* ]]; then
+            DESCRIPTION="Build argument"
+          elif [[ "$command" == CMD* ]]; then
+            DESCRIPTION="Default command"
+          else
+            DESCRIPTION="Configuration"
+          fi
+          
+          echo "| $LAYER_NUM | \`$SHORT_COMMAND\` | $size | $DESCRIPTION |" >> layers-report.md
           ((LAYER_NUM++))
         done
         
-        # Подсчет слоев отдельной командой
-        TOTAL_LAYERS=$((LAYER_NUM - 1))
-        ADD_COUNT=$(docker history --format "{{.CreatedBy}}" custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} | grep -c "^ADD" || true)
-        RUN_COUNT=$(docker history --format "{{.CreatedBy}}" custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} | grep -c "^RUN" || true)
-        COPY_COUNT=$(docker history --format "{{.CreatedBy}}" custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} | grep -c "^COPY" || true)
-        OTHER_COUNT=$((TOTAL_LAYERS - ADD_COUNT - RUN_COUNT - COPY_COUNT))
+        echo "" >> layers-report.md
+        echo "### Build Insights:" >> layers-report.md
+        echo "" >> layers-report.md
         
-        echo "" >> layers-report.md
-        echo "### Layer Summary:" >> layers-report.md
-        echo "" >> layers-report.md
-        echo "- **Total Layers**: $TOTAL_LAYERS" >> layers-report.md
-        echo "- **ADD Layers**: $ADD_COUNT" >> layers-report.md
-        echo "- **RUN Layers**: $RUN_COUNT" >> layers-report.md
-        echo "- **Other Layers**: $OTHER_COUNT" >> layers-report.md
+        # Анализ эффективности сборки
+        BASE_SIZE=$(docker image history --format "{{.Size}}" --reverse custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} | head -1)
+        TOTAL_SIZE=$(docker images custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} --format "{{.Size}}")
+        
+        echo "- **Base Layer**: $BASE_SIZE (Alpine rootfs)" >> layers-report.md
+        echo "- **Total Image**: $TOTAL_SIZE" >> layers-report.md
+        echo "- **Optimization**: Image uses $((LAYER_NUM-1)) layers" >> layers-report.md
+        
+        # Проверка на избыточные операции
+        if docker image history --format "{{.CreatedBy}}" custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} | grep -q "apk add.*ca-certificates"; then
+          echo "> ⚠️  Note: ca-certificates may be redundant (already in base rootfs)" >> layers-report.md
+        fi
         
         
     - name: Scan for CVE with Trivy
