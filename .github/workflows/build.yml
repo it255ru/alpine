@@ -42,78 +42,122 @@ jobs:
     - name: Analyze image layers
       id: layers
       run: |
-        # Создаем отчет о слоях в ПРАВИЛЬНОМ порядке (как в Dockerfile)
+        # Создаем отчет о слоях с объединенной информацией
         echo "## 🗂️ Image Layers Analysis" > layers-report.md
         echo "**Image:** custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }}" >> layers-report.md
         echo "**Total Size:** $(docker images custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} --format "{{.Size}}")" >> layers-report.md
         echo "" >> layers-report.md
-        echo "### Layer Details (Dockerfile order):" >> layers-report.md
+        echo "### Build Process Analysis:" >> layers-report.md
         echo "" >> layers-report.md
-        echo "| # | Command | Size |" >> layers-report.md
-        echo "|---|---------|------|" >> layers-report.md
+        echo "| # | Type | Command | Size | Impact |" >> layers-report.md
+        echo "|---|------|---------|------|--------|" >> layers-report.md
         
-        # Получаем историю слоев в правильном порядке (от старого к новому)
+        # Получаем историю слоев в правильном порядке
         docker history --no-trunc --format "{{.CreatedBy}}\t{{.Size}}" custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} | tail -n +2 > /tmp/docker_layers.txt
         
-        # Переворачиваем порядок (tac) чтобы получить порядок как в Dockerfile
+        # Переворачиваем порядок и обрабатываем
         LAYER_NUM=1
+        TOTAL_SIZE_BYTES=0
         tac /tmp/docker_layers.txt | while IFS=$'\t' read -r command size; do
           # Очищаем команду
           CLEAN_COMMAND=$(echo "$command" | sed 's/ # buildkit//g' | sed 's/|.* ALPINE_VERSION=[^ ]* //g' | sed 's/^[ \t]*//;s/[ \t]*$//')
-          SHORT_COMMAND=$(echo "$CLEAN_COMMAND" | head -c 60)
+          SHORT_COMMAND=$(echo "$CLEAN_COMMAND" | head -c 50)
           
-          echo "| $LAYER_NUM | \`$SHORT_COMMAND\` | $size |" >> layers-report.md
+          # Определяем тип и влияние
+          LAYER_TYPE=""
+          IMPACT=""
+          
+          if [[ "$command" == ARG* ]]; then
+            LAYER_TYPE="Build Arg"
+            IMPACT="⚙️ Build-time"
+          elif [[ "$command" == LABEL* ]]; then
+            LAYER_TYPE="Metadata"
+            IMPACT="📝 Info only"
+          elif [[ "$command" == ADD*rootfs* ]]; then
+            LAYER_TYPE="Base Image"
+            IMPACT="🏗️ Foundation"
+          elif [[ "$command" == RUN*apk*add* ]]; then
+            LAYER_TYPE="Package Install"
+            IMPACT="📦 Adds packages"
+          elif [[ "$command" == RUN*echo*repos* ]]; then
+            LAYER_TYPE="Config"
+            IMPACT="⚙️ Setup"
+          elif [[ "$command" == RUN*timezone* ]]; then
+            LAYER_TYPE="Config"
+            IMPACT="🌍 Localization"
+          elif [[ "$command" == RUN*ln* ]]; then
+            LAYER_TYPE="Config"
+            IMPACT="🔗 Symlinks"
+          elif [[ "$command" == VOLUME* ]]; then
+            LAYER_TYPE="Volume"
+            IMPACT="💾 Storage"
+          elif [[ "$command" == CMD* ]]; then
+            LAYER_TYPE="Command"
+            IMPACT="🚀 Runtime"
+          elif [[ "$command" == RUN* ]]; then
+            LAYER_TYPE="Execution"
+            IMPACT="🔧 Configuration"
+          else
+            LAYER_TYPE="Other"
+            IMPACT="❓ Unknown"
+          fi
+          
+          # Конвертируем размер в байты для статистики
+          if [[ "$size" == *"MB" ]]; then
+            SIZE_BYTES=$(echo "$size" | sed 's/MB//' | awk '{print $1 * 1024 * 1024}')
+          elif [[ "$size" == *"kB" ]]; then
+            SIZE_BYTES=$(echo "$size" | sed 's/kB//' | awk '{print $1 * 1024}')
+          elif [[ "$size" == *"B" && "$size" != "0B" ]]; then
+            SIZE_BYTES=$(echo "$size" | sed 's/B//')
+          else
+            SIZE_BYTES=0
+          fi
+          TOTAL_SIZE_BYTES=$((TOTAL_SIZE_BYTES + SIZE_BYTES))
+          
+          echo "| $LAYER_NUM | $LAYER_TYPE | \`$SHORT_COMMAND\` | $size | $IMPACT |" >> layers-report.md
           ((LAYER_NUM++))
         done
         
         TOTAL_LAYERS=$((LAYER_NUM - 1))
         
+        # Статистика сборки
         echo "" >> layers-report.md
-        echo "### Build Process Summary:" >> layers-report.md
-        echo "" >> layers-report.md
-        
-        # Анализируем процесс сборки в правильном порядке
-        echo "**Build Steps:**" >> layers-report.md
+        echo "### 📊 Build Statistics:" >> layers-report.md
         echo "" >> layers-report.md
         
-        tac /tmp/docker_layers.txt | while IFS=$'\t' read -r command size; do
-          CLEAN_COMMAND=$(echo "$command" | sed 's/ # buildkit//g' | sed 's/|.* ALPINE_VERSION=[^ ]* //g' | sed 's/^[ \t]*//;s/[ \t]*$//')
-          SHORT_COMMAND=$(echo "$CLEAN_COMMAND" | head -c 50)
-          
-          # Определяем тип операции для лучшего описания
-          if [[ "$command" == ADD* ]]; then
-            echo "- **Base Image**: $SHORT_COMMAND ($size)" >> layers-report.md
-          elif [[ "$command" == RUN* && "$size" != "0B" ]]; then
-            echo "- **Package Installation**: $SHORT_COMMAND ($size)" >> layers-report.md
-          elif [[ "$command" == RUN* ]]; then
-            echo "- **Configuration**: $SHORT_COMMAND" >> layers-report.md
-          elif [[ "$command" == LABEL* || "$command" == ARG* ]]; then
-            echo "- **Metadata**: $SHORT_COMMAND" >> layers-report.md
-          elif [[ "$command" == VOLUME* ]]; then
-            echo "- **Volume Setup**: $SHORT_COMMAND" >> layers-report.md
-          elif [[ "$command" == CMD* ]]; then
-            echo "- **Default Command**: $SHORT_COMMAND" >> layers-report.md
-          fi
+        # Анализ по типам слоев
+        echo "**Layer Types Distribution:**" >> layers-report.md
+        grep "| [0-9]* | " layers-report.md | cut -d'|' -f3 | sort | uniq -c | sort -nr | while read count type; do
+          echo "- **$type**: $count layers" >> layers-report.md
         done
         
         echo "" >> layers-report.md
-        echo "### Layer Statistics:" >> layers-report.md
-        echo "" >> layers-report.md
+        echo "**Size Analysis:**" >> layers-report.md
+        BASE_LAYER_SIZE=$(grep "Base Image" layers-report.md | head -1 | cut -d'|' -f5 | tr -d ' ')
+        PACKAGE_LAYERS=$(grep "Package Install" layers-report.md | wc -l)
+        CONFIG_LAYERS=$(grep "Config" layers-report.md | wc -l)
+        
+        echo "- **Base Layer**: $BASE_LAYER_SIZE" >> layers-report.md
+        echo "- **Package Layers**: $PACKAGE_LAYERS" >> layers-report.md
+        echo "- **Configuration Layers**: $CONFIG_LAYERS" >> layers-report.md
         echo "- **Total Layers**: $TOTAL_LAYERS" >> layers-report.md
         
-        # Подсчет по типам операций
-        ADD_COUNT=$(grep -c "^ADD" /tmp/docker_layers.txt || true)
-        RUN_COUNT=$(grep -c "^RUN" /tmp/docker_layers.txt || true)
-        OTHER_COUNT=$((TOTAL_LAYERS - ADD_COUNT - RUN_COUNT))
+        # Рекомендации по оптимизации
+        echo "" >> layers-report.md
+        echo "### 💡 Optimization Insights:" >> layers-report.md
+        echo "" >> layers-report.md
         
-        if [ $ADD_COUNT -gt 0 ]; then
-          echo "- **Base Layers**: $ADD_COUNT" >> layers-report.md
+        if grep -q "apk add.*ca-certificates" /tmp/docker_layers.txt; then
+          echo "> ⚠️  **Redundant package installation**: ca-certificates already included in base Alpine rootfs" >> layers-report.md
         fi
-        if [ $RUN_COUNT -gt 0 ]; then
-          echo "- **Execution Layers**: $RUN_COUNT" >> layers-report.md
+        
+        if [ $(grep "RUN" /tmp/docker_layers.txt | grep -v "0B" | wc -l) -gt 3 ]; then
+          echo "> 💡 **Consider layer consolidation**: Multiple RUN commands could be combined" >> layers-report.md
         fi
-        if [ $OTHER_COUNT -gt 0 ]; then
-          echo "- **Configuration Layers**: $OTHER_COUNT" >> layers-report.md
+        
+        ZERO_B_LAYERS=$(grep "| 0B |" layers-report.md | wc -l)
+        if [ $ZERO_B_LAYERS -gt 3 ]; then
+          echo "> 💡 **Layer efficiency**: $ZERO_B_LAYERS zero-size layers (metadata/configuration)" >> layers-report.md
         fi
         
         rm -f /tmp/docker_layers.txt
