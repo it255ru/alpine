@@ -132,49 +132,58 @@ jobs:
         echo "| # | Type | Command | Size | Impact |" >> layers-report.md
         echo "|---|------|---------|------|--------|" >> layers-report.md
         
-        docker history --no-trunc --format "table {{.CreatedBy}}\t{{.Size}}" custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} | tail -n +2 > /tmp/docker_layers.txt
+        # Используем более надежный метод получения данных
+        docker history --no-trunc custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} | tail -n +2 > /tmp/docker_history_full.txt
         
         LAYER_NUM=1
-        tac /tmp/docker_layers.txt | while IFS=$'\t' read -r command size; do
-          CLEAN_COMMAND=$(echo "$command" | sed 's/ # buildkit//g' | sed 's/|.* ALPINE_VERSION=[^ ]* //g' | sed 's/^[ \t]*//;s/[ \t]*$//')
+        tac /tmp/docker_history_full.txt | while IFS= read -r line; do
+          # Извлекаем размер (предпоследнее поле)
+          SIZE=$(echo "$line" | awk '{print $(NF-1)}')
+          # Извлекаем команду (все от 7-го поля до предпоследнего)
+          COMMAND=$(echo "$line" | awk '{for(i=7;i<NF-1;i++) printf $i " "; print ""}' | sed 's/^[ \t]*//;s/[ \t]*$//')
           
-          if [ ${#CLEAN_COMMAND} -gt 45 ]; then
-            SHORT_COMMAND="${CLEAN_COMMAND:0:45}..."
+          # Очищаем команду
+          CLEAN_COMMAND=$(echo "$COMMAND" | sed 's/# buildkit//g' | sed 's/|.* ALPINE_VERSION=[^ ]* //g')
+          
+          # Сокращаем только длинные команды
+          if [ ${#CLEAN_COMMAND} -gt 40 ]; then
+            SHORT_COMMAND="${CLEAN_COMMAND:0:40}..."
           else
             SHORT_COMMAND="$CLEAN_COMMAND"
           fi
           
+          # Определяем тип и влияние
           LAYER_TYPE=""
           IMPACT=""
           
-          if [[ "$command" == ARG* ]]; then
+          if [[ "$COMMAND" == ARG* ]]; then
             LAYER_TYPE="Build Arg"
             IMPACT="⚙️ Build-time"
-          elif [[ "$command" == LABEL* ]]; then
+          elif [[ "$COMMAND" == LABEL* ]]; then
             LAYER_TYPE="Metadata"
             IMPACT="📝 Info only"
-          elif [[ "$command" == ADD*rootfs* ]]; then
+          elif [[ "$COMMAND" == ADD*rootfs* ]]; then
             LAYER_TYPE="Base Image"
             IMPACT="🏗️ Foundation"
-          elif [[ "$command" == RUN*apk*add* && "$size" != "0B" ]]; then
+          elif [[ "$COMMAND" == RUN*apk*add* && "$SIZE" != "0B" ]]; then
             LAYER_TYPE="Packages"
             IMPACT="📦 Adds packages"
-          elif [[ "$command" == RUN*echo*repos* ]]; then
+          elif [[ "$COMMAND" == RUN*echo*repos* ]]; then
             LAYER_TYPE="Config"
             IMPACT="⚙️ Setup"
-          elif [[ "$command" == RUN*timezone* ]]; then
+          elif [[ "$COMMAND" == RUN*timezone* ]]; then
             LAYER_TYPE="Config"
             IMPACT="🌍 Localization"
-          elif [[ "$command" == RUN*ln* ]]; then
+          elif [[ "$COMMAND" == RUN*ln* ]]; then
             LAYER_TYPE="Symlinks"
             IMPACT="🔗 Symlinks"
-          elif [[ "$command" == VOLUME* ]]; then
+          elif [[ "$COMMAND" == VOLUME* ]]; then
             LAYER_TYPE="Volume"
             IMPACT="💾 Storage"
-          elif [[ "$command" == CMD* ]]; then
+          elif [[ "$COMMAND" == CMD* ]]; then
             LAYER_TYPE="Command"
             IMPACT="🚀 Runtime"
-          elif [[ "$command" == RUN* ]]; then
+          elif [[ "$COMMAND" == RUN* ]]; then
             LAYER_TYPE="Execution"
             IMPACT="🔧 Configuration"
           else
@@ -182,7 +191,9 @@ jobs:
             IMPACT="❓ Unknown"
           fi
           
-          echo "| $LAYER_NUM | $LAYER_TYPE | \`$SHORT_COMMAND\` | $size | $IMPACT |" >> layers-report.md
+          # Выводим с правильным форматированием
+          printf "| %-2s | %-12s | \`%-43s\` | %-6s | %-15s |\n" \
+            "$LAYER_NUM" "$LAYER_TYPE" "$SHORT_COMMAND" "$SIZE" "$IMPACT" >> layers-report.md
           ((LAYER_NUM++))
         done
         
@@ -193,42 +204,29 @@ jobs:
         echo "" >> layers-report.md
         
         echo "**Layer Types:**" >> layers-report.md
-        grep "| [0-9]* | " layers-report.md | awk -F'|' '{print $3}' | sed 's/^ *//;s/ *$//' | sort | uniq -c | sort -nr | while read count type; do
+        awk -F'|' '/\| [0-9]* \|/ {gsub(/^[ \t]+|[ \t]+$/, "", $3); print $3}' layers-report.md | sort | uniq -c | sort -nr | while read count type; do
           echo "- **$type**: $count layers" >> layers-report.md
         done
         
         echo "" >> layers-report.md
         echo "**Size Analysis:**" >> layers-report.md
         
-        BASE_SIZE=$(grep "Base Image" layers-report.md | head -1 | awk -F'|' '{print $5}' | tr -d ' ')
-        PACKAGE_COUNT=$(grep "Packages" layers-report.md | wc -l)
-        CONFIG_COUNT=$(grep "Config" layers-report.md | wc -l)
-        ZERO_SIZE_COUNT=$(grep "| 0B |" layers-report.md | wc -l)
+        BASE_SIZE=$(awk -F'|' '/Base Image/ {gsub(/ /, "", $4); print $4; exit}' layers-report.md)
+        PACKAGE_COUNT=$(grep -c "Packages" layers-report.md)
+        ZERO_SIZE_COUNT=$(grep -c "| 0B |" layers-report.md)
         
         echo "- **Base Layer**: $BASE_SIZE" >> layers-report.md
         echo "- **Package Layers**: $PACKAGE_COUNT" >> layers-report.md
-        echo "- **Configuration Layers**: $CONFIG_COUNT" >> layers-report.md
         echo "- **Zero-size Layers**: $ZERO_SIZE_COUNT" >> layers-report.md
         echo "- **Total Layers**: $TOTAL_LAYERS" >> layers-report.md
         
-        echo "" >> layers-report.md
-        echo "### 💡 Optimization Insights:" >> layers-report.md
-        echo "" >> layers-report.md
-        
-        if grep -q "apk add.*ca-certificates" /tmp/docker_layers.txt; then
-          echo "> ⚠️  **Redundant package**: ca-certificates already in base rootfs" >> layers-report.md
+        TRUNCATED_COUNT=$(grep -c "\.\.\.\` |" layers-report.md)
+        if [ $TRUNCATED_COUNT -gt 0 ]; then
+          echo "" >> layers-report.md
+          echo "> 📝 **Note**: $TRUNCATED_COUNT commands are truncated (view full commands in artifacts)" >> layers-report.md
         fi
         
-        if [ $ZERO_SIZE_COUNT -gt 5 ]; then
-          echo "> 💡 **Layer efficiency**: Consider combining metadata layers" >> layers-report.md
-        fi
-        
-        RUN_COUNT=$(grep "RUN" /tmp/docker_layers.txt | wc -l)
-        if [ $RUN_COUNT -gt 3 ]; then
-          echo "> 💡 **Build optimization**: Multiple RUN commands could be consolidated" >> layers-report.md
-        fi
-        
-        rm -f /tmp/docker_layers.txt
+        rm -f /tmp/docker_history_full.txt
 
     - name: Save Docker image as tar archive
       run: |
