@@ -132,60 +132,53 @@ jobs:
         echo "| # | Type | Command | Size | Impact |" >> layers-report.md
         echo "|---|------|---------|------|--------|" >> layers-report.md
         
-        # Используем более надежный метод
-        docker history --no-trunc custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} | tail -n +2 > /tmp/docker_history_full.txt
+        # Используем человеко-читаемый формат с правильным разделителем
+        docker history --no-trunc --format "{{.CreatedBy}}|||{{.Size}}" custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} | tail -n +2 > /tmp/docker_layers_custom.txt
         
         LAYER_NUM=1
-        tac /tmp/docker_history_full.txt | while IFS= read -r line; do
-          # Извлекаем размер (предпоследнее поле)
-          SIZE=$(echo "$line" | awk '{print $(NF-1)}')
-          # Извлекаем команду (все от 7-го поля до предпоследнего)
-          COMMAND=$(echo "$line" | awk '{for(i=7;i<NF-1;i++) printf $i " "; print ""}' | sed 's/^[ \t]*//;s/[ \t]*$//')
-          
+        tac /tmp/docker_layers_custom.txt | while IFS='|||' read -r command size; do
           # Очищаем команду
-          CLEAN_COMMAND=$(echo "$COMMAND" | sed 's/# buildkit//g' | sed 's/|.* ALPINE_VERSION=[^ ]* //g')
+          CLEAN_COMMAND=$(echo "$command" | sed 's/# buildkit//g' | sed 's/|.* ALPINE_VERSION=[^ ]* //g' | sed 's/^[ \t]*//;s/[ \t]*$//')
           
-          # Сокращаем только длинные команды
+          # Сокращаем только если команда длиннее 40 символов
           if [ ${#CLEAN_COMMAND} -gt 40 ]; then
             SHORT_COMMAND="${CLEAN_COMMAND:0:40}..."
-            TRUNCATED=true
           else
             SHORT_COMMAND="$CLEAN_COMMAND"
-            TRUNCATED=false
           fi
           
           # Определяем тип и влияние
           LAYER_TYPE=""
           IMPACT=""
           
-          if [[ "$COMMAND" == ARG* ]]; then
+          if [[ "$command" == ARG* ]]; then
             LAYER_TYPE="Build Arg"
             IMPACT="⚙️ Build-time"
-          elif [[ "$COMMAND" == LABEL* ]]; then
+          elif [[ "$command" == LABEL* ]]; then
             LAYER_TYPE="Metadata"
             IMPACT="📝 Info only"
-          elif [[ "$COMMAND" == ADD*rootfs* ]]; then
+          elif [[ "$command" == ADD*rootfs* ]]; then
             LAYER_TYPE="Base Image"
             IMPACT="🏗️ Foundation"
-          elif [[ "$COMMAND" == RUN*apk*add* && "$SIZE" != "0B" ]]; then
+          elif [[ "$command" == RUN*apk*add* && "$size" != "0B" ]]; then
             LAYER_TYPE="Packages"
             IMPACT="📦 Adds packages"
-          elif [[ "$COMMAND" == RUN*echo*repos* ]]; then
+          elif [[ "$command" == RUN*echo*repos* ]]; then
             LAYER_TYPE="Config"
             IMPACT="⚙️ Setup"
-          elif [[ "$COMMAND" == RUN*timezone* ]]; then
+          elif [[ "$command" == RUN*timezone* ]]; then
             LAYER_TYPE="Config"
             IMPACT="🌍 Localization"
-          elif [[ "$COMMAND" == RUN*ln* ]]; then
+          elif [[ "$command" == RUN*ln* ]]; then
             LAYER_TYPE="Symlinks"
             IMPACT="🔗 Symlinks"
-          elif [[ "$COMMAND" == VOLUME* ]]; then
+          elif [[ "$command" == VOLUME* ]]; then
             LAYER_TYPE="Volume"
             IMPACT="💾 Storage"
-          elif [[ "$COMMAND" == CMD* ]]; then
+          elif [[ "$command" == CMD* ]]; then
             LAYER_TYPE="Command"
             IMPACT="🚀 Runtime"
-          elif [[ "$COMMAND" == RUN* ]]; then
+          elif [[ "$command" == RUN* ]]; then
             LAYER_TYPE="Execution"
             IMPACT="🔧 Configuration"
           else
@@ -193,8 +186,7 @@ jobs:
             IMPACT="❓ Unknown"
           fi
           
-          # Выводим с правильным форматированием
-          echo "| $LAYER_NUM | $LAYER_TYPE | \`$SHORT_COMMAND\` | $SIZE | $IMPACT |" >> layers-report.md
+          echo "| $LAYER_NUM | $LAYER_TYPE | \`$SHORT_COMMAND\` | $size | $IMPACT |" >> layers-report.md
           ((LAYER_NUM++))
         done
         
@@ -227,7 +219,7 @@ jobs:
           echo "> 📝 **Note**: $TRUNCATED_COUNT commands are truncated (view full commands in artifacts)" >> layers-report.md
         fi
         
-        rm -f /tmp/docker_history_full.txt
+        rm -f /tmp/docker_layers_custom.txt
 
     - name: Save Docker image as tar archive
       run: |
