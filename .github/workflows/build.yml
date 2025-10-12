@@ -52,18 +52,20 @@ jobs:
         echo "| # | Command | Size |" >> layers-report.md
         echo "|---|---------|------|" >> layers-report.md
         
-        # Получаем историю слоев в правильном порядке (от самого старого к новому)
+        # Сохраняем историю слоев во временный файл
+        docker history --no-trunc --format "{{.CreatedBy}}\t{{.Size}}" custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} | tail -n +2 > /tmp/docker_layers.txt
+        
+        # Инициализируем счетчики
         LAYER_NUM=1
-        TOTAL_LAYERS=0
         ADD_COUNT=0
         RUN_COUNT=0
         COPY_COUNT=0
         OTHER_COUNT=0
         
-        docker history --no-trunc --format "{{.CreatedBy}}\t{{.Size}}" custom-alpine:${{ steps.version.outputs.ALPINE_VERSION }} | tail -n +2 | while IFS=$'\t' read -r command size; do
-          # Очищаем команду от buildkit и ARG параметров
+        # Обрабатываем файл
+        while IFS=$'\t' read -r command size; do
+          # Очищаем команду
           CLEAN_COMMAND=$(echo "$command" | sed 's/ # buildkit//g' | sed 's/|.* ALPINE_VERSION=[^ ]* //g' | sed 's/^[ \t]*//;s/[ \t]*$//')
-          # Обрезаем длинную команду
           SHORT_COMMAND=$(echo "$CLEAN_COMMAND" | head -c 60)
           
           echo "| $LAYER_NUM | \`$SHORT_COMMAND\` | $size |" >> layers-report.md
@@ -80,8 +82,9 @@ jobs:
           fi
           
           ((LAYER_NUM++))
-          ((TOTAL_LAYERS++))
-        done
+        done < /tmp/docker_layers.txt
+        
+        TOTAL_LAYERS=$((LAYER_NUM - 1))
         
         echo "" >> layers-report.md
         echo "### Layer Summary:" >> layers-report.md
@@ -100,7 +103,10 @@ jobs:
         if [ $OTHER_COUNT -gt 0 ]; then
           echo "- **Other Layers**: $OTHER_COUNT" >> layers-report.md
         fi
-
+        
+        # Очищаем временный файл
+        rm -f /tmp/docker_layers.txt
+        
     - name: Scan for CVE with Trivy
       id: trivy-scan
       continue-on-error: true
