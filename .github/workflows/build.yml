@@ -187,7 +187,7 @@ jobs:
           fi
           
           # Выводим в таблицу с правильным форматированием
-          printf "| %-2s | %-12s | \\\`%-43s\\\` | %-6s | %-15s |\n" \
+          printf "| %-2s | %-12s | \`%-43s\` | %-6s | %-15s |\n" \
             "$LAYER_NUM" "$LAYER_TYPE" "$SHORT_COMMAND" "$size" "$IMPACT" >> layers-report.md
           ((LAYER_NUM++))
         done
@@ -240,8 +240,8 @@ jobs:
           echo "> 💡 **Build optimization**: Multiple RUN commands could be consolidated" >> layers-report.md
         fi
         
-        # Подсчет сокращенных команд
-        TRUNCATED_COUNT=$(grep -c "\.\.\.` |" layers-report.md)
+        # Подсчет сокращенных команд (исправленная версия)
+        TRUNCATED_COUNT=$(grep -c "\.\.\.\` |" layers-report.md)
         if [ $TRUNCATED_COUNT -gt 0 ]; then
           echo "> 📝 **Note**: $TRUNCATED_COUNT commands truncated (view full commands in artifacts)" >> layers-report.md
         fi
